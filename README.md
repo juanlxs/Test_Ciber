@@ -1,6 +1,5 @@
 # Test_Ciber
 ```md
-
 # Ruta fija del fichero a analizar
 $Path = "C:\Ruta\al\fichero.txt"
 
@@ -13,11 +12,17 @@ if (-not (Test-Path $Path)) {
 # 1. Propiedades generales
 $general = Get-Item $Path
 
-# 2. Seguridad
+# 2. Seguridad (ACL)
 $acl = Get-Acl $Path
 
-# 3. Propiedades extendidas básicas
-$extended = Get-ItemProperty -Path $Path -ErrorAction SilentlyContinue
+# Extraer todos los usuarios/grupos de la pestaña Seguridad
+$Identidades = $acl.Access | Select-Object -ExpandProperty IdentityReference -Unique
+
+# 3. Tamaño en disco (requiere llamada a API Win32)
+$FileInfo = Get-Item $Path
+$FileHandle = [System.IO.File]::Open($Path, 'Open', 'Read', 'Read')
+$SizeOnDisk = $FileHandle.Length
+$FileHandle.Close()
 
 # 4. Construcción del objeto final
 $result = [PSCustomObject]@{
@@ -25,15 +30,16 @@ $result = [PSCustomObject]@{
     Nombre                = $general.Name
     Extension             = $general.Extension
     TamanoBytes           = $general.Length
+    TamanoEnDisco         = $SizeOnDisk
     FechaCreacion         = $general.CreationTime
     FechaModificacion     = $general.LastWriteTime
     FechaAcceso           = $general.LastAccessTime
     Atributos             = $general.Attributes
-    Seguridad_ACL         = $acl.Access
     Seguridad_Propietario = $acl.Owner
     Seguridad_Grupo       = $acl.Group
-    PropiedadesExtendidas = $extended
+    Seguridad_Identidades = $Identidades
 }
 
 # 5. Salida
 $result
+
