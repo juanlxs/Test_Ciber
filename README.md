@@ -1,18 +1,8 @@
 # Test_Ciber
 ```md
-<#
-.SYNOPSIS
-    Extrae TODAS las propiedades posibles de un fichero:
-    - Generales (Get-Item)
-    - Seguridad (Get-Acl)
-    - Detalles extendidos (Shell.Application)
-    Devuelve un objeto unificado por fichero.
-#>
 
-param(
-    [Parameter(Mandatory=$true)]
-    [string]$Path
-)
+# Ruta fija del fichero a analizar
+$Path = "C:\Ruta\al\fichero.txt"
 
 # Validación
 if (-not (Test-Path $Path)) {
@@ -20,43 +10,30 @@ if (-not (Test-Path $Path)) {
     exit
 }
 
-# --- 1. Propiedades generales ---
+# 1. Propiedades generales
 $general = Get-Item $Path
 
-# --- 2. Propiedades de seguridad ---
+# 2. Seguridad
 $acl = Get-Acl $Path
 
-# --- 3. Propiedades extendidas (Detalles) ---
-$shell = New-Object -ComObject Shell.Application
-$folder = $shell.Namespace((Split-Path $Path))
-$file   = $folder.ParseName((Split-Path $Path -Leaf))
+# 3. Propiedades extendidas básicas
+$extended = Get-ItemProperty -Path $Path -ErrorAction SilentlyContinue
 
-$extendedProps = @{}
-
-0..400 | ForEach-Object {
-    $name  = $folder.GetDetailsOf($folder.Items, $_)
-    $value = $folder.GetDetailsOf($file, $_)
-
-    if ($name -and $value) {
-        $extendedProps[$name] = $value
-    }
-}
-
-# --- 4. Construcción del objeto final ---
+# 4. Construcción del objeto final
 $result = [PSCustomObject]@{
-    Ruta                = $general.FullName
-    Nombre              = $general.Name
-    Extension           = $general.Extension
-    TamanoBytes         = $general.Length
-    FechaCreacion       = $general.CreationTime
-    FechaModificacion   = $general.LastWriteTime
-    FechaAcceso         = $general.LastAccessTime
-    Atributos           = $general.Attributes
-    Seguridad_ACL       = $acl.Access
+    Ruta                  = $general.FullName
+    Nombre                = $general.Name
+    Extension             = $general.Extension
+    TamanoBytes           = $general.Length
+    FechaCreacion         = $general.CreationTime
+    FechaModificacion     = $general.LastWriteTime
+    FechaAcceso           = $general.LastAccessTime
+    Atributos             = $general.Attributes
+    Seguridad_ACL         = $acl.Access
     Seguridad_Propietario = $acl.Owner
     Seguridad_Grupo       = $acl.Group
-    PropiedadesExtendidas = $extendedProps
+    PropiedadesExtendidas = $extended
 }
 
-# --- 5. Salida ---
+# 5. Salida
 $result
