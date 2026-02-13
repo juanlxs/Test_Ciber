@@ -1,6 +1,8 @@
 # Test_Ciber
 ```md
 
+$LetrasUSB = @()
+
 Get-Disk |
     Where-Object BusType -eq 'USB' |
     ForEach-Object {
@@ -16,6 +18,9 @@ Get-Disk |
                 $vol = Get-Volume -DriveLetter $_.DriveLetter -ErrorAction SilentlyContinue
 
                 if ($null -eq $vol) { return }
+
+                # Guardar la letra en el array
+                $LetrasUSB += $vol.DriveLetter
 
                 [PSCustomObject]@{
                     Nombre        = if ($vol.FileSystemLabel) { $vol.FileSystemLabel } else { "(Sin nombre)" }
