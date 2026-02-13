@@ -1,11 +1,13 @@
 # Test_Ciber
 ```md
+# 1) PRIMER PASO: Recoger toda la información antes de imprimir nada
+$unidades = @()
+
 Get-Disk |
     Where-Object BusType -eq 'USB' |
     ForEach-Object {
         $disk = $_
 
-        # Obtener número de serie físico del USB
         $serial = (Get-CimInstance Win32_PhysicalMedia |
                    Where-Object { $_.Tag -eq ("\\.\PHYSICALDRIVE" + $disk.Number) }).SerialNumber
 
@@ -39,28 +41,38 @@ Get-Disk |
                     $cont += " - $c"
                 }
 
-                # Unir todo para calcular ancho
-                $todas = $info + $cont
-                $max = ($todas | Measure-Object -Maximum Length).Maximum
-
-                # Dibujar cuadro
-                Write-Host ""
-                Write-Host ("╔" + ("═" * ($max + 2)) + "╗")
-
-                # Bloque de información
-                foreach ($l in $info) {
-                    Write-Host ("║ " + $l.PadRight($max) + " ║")
+                # Guardar en memoria
+                $unidades += [PSCustomObject]@{
+                    Info = $info
+                    Cont = $cont
                 }
-
-                # Separador
-                Write-Host ("╠" + ("═" * ($max + 2)) + "╣")
-
-                # Bloque de contenido
-                foreach ($l in $cont) {
-                    Write-Host ("║ " + $l.PadRight($max) + " ║")
-                }
-
-                Write-Host ("╚" + ("═" * ($max + 2)) + "╝")
-                Write-Host ""
             }
     }
+
+# 2) SEGUNDO PASO: Calcular el ancho máximo entre TODAS las unidades
+$max = 0
+foreach ($u in $unidades) {
+    $todas = $u.Info + $u.Cont
+    $lmax = ($todas | Measure-Object -Maximum Length).Maximum
+    if ($lmax -gt $max) { $max = $lmax }
+}
+
+# 3) TERCER PASO: Imprimir todos los cuadros con el MISMO ancho
+foreach ($u in $unidades) {
+
+    Write-Host ""
+    Write-Host ("╔" + ("═" * ($max + 2)) + "╗")
+
+    foreach ($l in $u.Info) {
+        Write-Host ("║ " + $l.PadRight($max) + " ║")
+    }
+
+    Write-Host ("╠" + ("═" * ($max + 2)) + "╣")
+
+    foreach ($l in $u.Cont) {
+        Write-Host ("║ " + $l.PadRight($max) + " ║")
+    }
+
+    Write-Host ("╚" + ("═" * ($max + 2)) + "╝")
+    Write-Host ""
+}
