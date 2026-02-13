@@ -1,7 +1,5 @@
 # Test_Ciber
 ```md
-$bloques = @()   # Aquí guardaremos cada bloque formateado
-
 Get-Disk |
     Where-Object BusType -eq 'USB' |
     ForEach-Object {
@@ -22,52 +20,32 @@ Get-Disk |
 
                 # Obtener contenido de la unidad
                 $contenido = Get-ChildItem "$letra`:\" -Directory | Select-Object -ExpandProperty Name
+                if (-not $contenido) { $contenido = @("(Sin carpetas)") }
 
-                if (-not $contenido) {
-                    $contenido = @("(Sin carpetas)")
-                }
+                # ============================
+                #   CUADRO UNICODE PRO
+                # ============================
 
-                # Crear bloque formateado
-                $bloque = @()
-                $bloque += "Nombre     : $($vol.FileSystemLabel)"
-                $bloque += "Letra      : $letra"
-                $bloque += ("Libre (GB) : {0:N2}" -f ($vol.SizeRemaining / 1GB))
-                $bloque += ("Usado (GB) : {0:N2}" -f (($vol.Size - $vol.SizeRemaining) / 1GB))
-                $bloque += ("Total (GB) : {0:N2}" -f ($vol.Size / 1GB))
-                $bloque += "Nº Serie   : $($serial.Trim())"
-                $bloque += ""
-                $bloque += "Contenido:"
+                Write-Host ""
+                Write-Host "╔══════════════════════════════════════╗"
+                Write-Host "║   Información de la unidad USB       ║"
+                Write-Host "╠══════════════════════════════════════╣"
+
+                Write-Host ("║ Nombre     : {0,-24}║" -f $vol.FileSystemLabel)
+                Write-Host ("║ Letra      : {0,-24}║" -f $letra)
+                Write-Host ("║ Libre (GB) : {0,-24}║" -f ("{0:N2}" -f ($vol.SizeRemaining / 1GB)))
+                Write-Host ("║ Usado (GB) : {0,-24}║" -f ("{0:N2}" -f (($vol.Size - $vol.SizeRemaining) / 1GB)))
+                Write-Host ("║ Total (GB) : {0,-24}║" -f ("{0:N2}" -f ($vol.Size / 1GB)))
+                Write-Host ("║ Nº Serie   : {0,-24}║" -f $serial.Trim())
+
+                Write-Host "╠══════════════════════════════════════╣"
+                Write-Host ("║ Contenido:{0, -27}║" -f "")
+
                 foreach ($c in $contenido) {
-                    $bloque += " - $c"
+                    Write-Host ("║  - {0,-28}║" -f $c)
                 }
 
-                # Guardar bloque como un solo string
-                $bloques += ,($bloque -join "`n")
+                Write-Host "╚══════════════════════════════════════╝"
+                Write-Host ""
             }
     }
-
-# ============================
-#   MOSTRAR BLOQUES EN COLUMNAS
-# ============================
-
-# Calcular ancho máximo de columna
-$ancho = ($bloques | ForEach-Object { $_.Split("`n") | Measure-Object -Maximum Length }).Maximum + 4
-
-# Convertir cada bloque en líneas
-$lineas = $bloques | ForEach-Object { $_.Split("`n") }
-
-# Calcular número máximo de líneas
-$maxLineas = ($lineas | ForEach-Object { $_.Count } | Measure-Object -Maximum).Maximum
-
-# Imprimir en columnas
-for ($i = 0; $i -lt $maxLineas; $i++) {
-    $fila = ""
-    foreach ($bloque in $lineas) {
-        if ($i -lt $bloque.Count) {
-            $fila += $bloque[$i].PadRight($ancho)
-        } else {
-            $fila += "".PadRight($ancho)
-        }
-    }
-    Write-Host $fila
-}
