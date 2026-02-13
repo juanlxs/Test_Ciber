@@ -1,11 +1,12 @@
 # Test_Ciber
 ```md
+$ancho = 60  # ancho fijo para cada línea dentro del cuadro
+
 Get-Disk |
     Where-Object BusType -eq 'USB' |
     ForEach-Object {
         $disk = $_
 
-        # Obtener número de serie físico del USB
         $serial = (Get-CimInstance Win32_PhysicalMedia |
                    Where-Object { $_.Tag -eq ("\\.\PHYSICALDRIVE" + $disk.Number) }).SerialNumber
 
@@ -18,34 +19,43 @@ Get-Disk |
 
                 $letra = $vol.DriveLetter
 
-                # Obtener contenido de la unidad
+                # Obtener contenido
                 $contenido = Get-ChildItem "$letra`:\" -Directory | Select-Object -ExpandProperty Name
                 if (-not $contenido) { $contenido = @("(Sin carpetas)") }
+
+                # Función para ajustar texto al ancho
+                function Ajustar([string]$texto) {
+                    if ($texto.Length -ge $ancho) {
+                        return $texto.Substring(0, $ancho)
+                    } else {
+                        return $texto.PadRight($ancho)
+                    }
+                }
 
                 # ============================
                 #   CUADRO UNICODE PRO
                 # ============================
 
                 Write-Host ""
-                Write-Host "╔══════════════════════════════════════╗"
-                Write-Host "║   Información de la unidad USB       ║"
-                Write-Host "╠══════════════════════════════════════╣"
+                Write-Host "╔" + ("═" * ($ancho + 2)) + "╗"
+                Write-Host ("║ " + (Ajustar "Información de la unidad USB") + " ║")
+                Write-Host "╠" + ("═" * ($ancho + 2)) + "╣"
 
-                Write-Host ("║ Nombre     : {0,-24}║" -f $vol.FileSystemLabel)
-                Write-Host ("║ Letra      : {0,-24}║" -f $letra)
-                Write-Host ("║ Libre (GB) : {0,-24}║" -f ("{0:N2}" -f ($vol.SizeRemaining / 1GB)))
-                Write-Host ("║ Usado (GB) : {0,-24}║" -f ("{0:N2}" -f (($vol.Size - $vol.SizeRemaining) / 1GB)))
-                Write-Host ("║ Total (GB) : {0,-24}║" -f ("{0:N2}" -f ($vol.Size / 1GB)))
-                Write-Host ("║ Nº Serie   : {0,-24}║" -f $serial.Trim())
+                Write-Host ("║ " + (Ajustar ("Nombre     : $($vol.FileSystemLabel)")) + " ║")
+                Write-Host ("║ " + (Ajustar ("Letra      : $letra")) + " ║")
+                Write-Host ("║ " + (Ajustar ("Libre (GB) : {0:N2}" -f ($vol.SizeRemaining / 1GB))) + " ║")
+                Write-Host ("║ " + (Ajustar ("Usado (GB) : {0:N2}" -f (($vol.Size - $vol.SizeRemaining) / 1GB))) + " ║")
+                Write-Host ("║ " + (Ajustar ("Total (GB) : {0:N2}" -f ($vol.Size / 1GB))) + " ║")
+                Write-Host ("║ " + (Ajustar ("Nº Serie   : $($serial.Trim())")) + " ║")
 
-                Write-Host "╠══════════════════════════════════════╣"
-                Write-Host ("║ Contenido:{0, -27}║" -f "")
+                Write-Host "╠" + ("═" * ($ancho + 2)) + "╣"
+                Write-Host ("║ " + (Ajustar "Contenido:") + " ║")
 
                 foreach ($c in $contenido) {
-                    Write-Host ("║  - {0,-28}║" -f $c)
+                    Write-Host ("║ " + (Ajustar (" - $c")) + " ║")
                 }
 
-                Write-Host "╚══════════════════════════════════════╝"
+                Write-Host "╚" + ("═" * ($ancho + 2)) + "╝"
                 Write-Host ""
             }
     }
