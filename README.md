@@ -1,7 +1,5 @@
 # Test_Ciber
 ```md
-$ancho = 60  # ancho fijo para cada línea dentro del cuadro
-
 Get-Disk |
     Where-Object BusType -eq 'USB' |
     ForEach-Object {
@@ -23,39 +21,36 @@ Get-Disk |
                 $contenido = Get-ChildItem "$letra`:\" -Directory | Select-Object -ExpandProperty Name
                 if (-not $contenido) { $contenido = @("(Sin carpetas)") }
 
-                # Función para ajustar texto al ancho
-                function Ajustar([string]$texto) {
-                    if ($texto.Length -ge $ancho) {
-                        return $texto.Substring(0, $ancho)
-                    } else {
-                        return $texto.PadRight($ancho)
-                    }
-                }
-
-                # ============================
-                #   CUADRO UNICODE PRO
-                # ============================
-
-                Write-Host ""
-                Write-Host "╔" + ("═" * ($ancho + 2)) + "╗"
-                Write-Host ("║ " + (Ajustar "Información de la unidad USB") + " ║")
-                Write-Host "╠" + ("═" * ($ancho + 2)) + "╣"
-
-                Write-Host ("║ " + (Ajustar ("Nombre     : $($vol.FileSystemLabel)")) + " ║")
-                Write-Host ("║ " + (Ajustar ("Letra      : $letra")) + " ║")
-                Write-Host ("║ " + (Ajustar ("Libre (GB) : {0:N2}" -f ($vol.SizeRemaining / 1GB))) + " ║")
-                Write-Host ("║ " + (Ajustar ("Usado (GB) : {0:N2}" -f (($vol.Size - $vol.SizeRemaining) / 1GB))) + " ║")
-                Write-Host ("║ " + (Ajustar ("Total (GB) : {0:N2}" -f ($vol.Size / 1GB))) + " ║")
-                Write-Host ("║ " + (Ajustar ("Nº Serie   : $($serial.Trim())")) + " ║")
-
-                Write-Host "╠" + ("═" * ($ancho + 2)) + "╣"
-                Write-Host ("║ " + (Ajustar "Contenido:") + " ║")
+                # Construir líneas del cuadro
+                $lineas = @(
+                    "Información de la unidad USB"
+                    ""
+                    "Nombre     : $($vol.FileSystemLabel)"
+                    "Letra      : $letra"
+                    "Libre (GB) : {0:N2}" -f ($vol.SizeRemaining / 1GB)
+                    "Usado (GB) : {0:N2}" -f (($vol.Size - $vol.SizeRemaining) / 1GB)
+                    "Total (GB) : {0:N2}" -f ($vol.Size / 1GB)
+                    "Nº Serie   : $($serial.Trim())"
+                    ""
+                    "Contenido:"
+                )
 
                 foreach ($c in $contenido) {
-                    Write-Host ("║ " + (Ajustar (" - $c")) + " ║")
+                    $lineas += " - $c"
                 }
 
-                Write-Host "╚" + ("═" * ($ancho + 2)) + "╝"
+                # Calcular ancho máximo
+                $max = ($lineas | Measure-Object -Maximum Length).Maximum
+
+                # Dibujar cuadro
+                Write-Host ""
+                Write-Host ("╔" + ("═" * ($max + 2)) + "╗")
+
+                foreach ($l in $lineas) {
+                    Write-Host ("║ " + $l.PadRight($max) + " ║")
+                }
+
+                Write-Host ("╚" + ("═" * ($max + 2)) + "╝")
                 Write-Host ""
             }
     }
