@@ -1,9 +1,7 @@
 # Test_Ciber
 ```md
-
 $LetrasUSB = @()   # Array donde guardaremos las letras USB
 
-(
 Get-Disk |
     Where-Object BusType -eq 'USB' |
     ForEach-Object {
@@ -23,6 +21,7 @@ Get-Disk |
                 # Guardar la letra en el array
                 $LetrasUSB += $vol.DriveLetter
 
+                # Mostrar información de la unidad
                 [PSCustomObject]@{
                     Nombre        = if ($vol.FileSystemLabel) { $vol.FileSystemLabel } else { "(Sin nombre)" }
                     Letra         = $vol.DriveLetter
@@ -31,13 +30,11 @@ Get-Disk |
                     'Total (GB)'  = "{0:N2}" -f ($vol.Size / 1GB)
                     'Nº Serie'    = if ($serial) { $serial.Trim() } else { "(No disponible)" }
                 }
+
+                # Mostrar contenido de la unidad JUSTO AQUÍ
+                Write-Host "`n=== Contenido de $($vol.DriveLetter)`: ===" -ForegroundColor Cyan
+                Get-ChildItem "$($vol.DriveLetter):\" -Directory | Select-Object Name
+                Write-Host ""
             }
-    }
-) | Format-Table -AutoSize
+    } | Format-Table -AutoSize
 
-
-# Mostrar contenido de cada letra USB
-foreach ($letra in $LetrasUSB) {
-    Write-Host "`n=== Contenido de $letra`: ===" -ForegroundColor Cyan
-    Get-ChildItem "$letra`:\" -Directory | Select-Object Name
-}
