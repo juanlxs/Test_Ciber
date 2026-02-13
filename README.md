@@ -1,30 +1,12 @@
 # Test_Ciber
 ```md
-# Ruta del archivo con la lista
-$listFile = "list.txt"
+Get-Volume |
+    Where-Object { $_.DriveType -eq 'Removable' } |
+    Select-Object `
+        @{Name='Nombre'; Expression={ $_.FileSystemLabel }},
+        @{Name='Letra'; Expression={ $_.DriveLetter }},
+        @{Name='Libre (GB)'; Expression={ "{0:N2}" -f ($_.SizeRemaining / 1GB) }},
+        @{Name='Usado (GB)'; Expression={ "{0:N2}" -f (($_.Size - $_.SizeRemaining) / 1GB) }},
+        @{Name='Total (GB)'; Expression={ "{0:N2}" -f ($_.Size / 1GB) }} |
+    Format-Table -AutoSize
 
-# Archivo de log para errores
-$errorLog = "errores.log"
-
-# Limpiar log anterior
-Clear-Content $errorLog -ErrorAction SilentlyContinue
-
-# Procesar cada línea
-Get-Content $listFile | ForEach-Object {
-
-    $ruta = $_.Trim()
-    if ($ruta -eq "") { return }
-
-    # Añadir unidad F:
-    $origen = "F:$ruta"
-
-    # Ejecutar robocopy en modo backup (/b)
-    # Ejemplo copiando a un destino fijo (ajusta según necesites)
-    $destino = "F:\destino"
-
-    robocopy $origen $destino /b /r:0 /w:0 /np /njh /njs /ndl /nc /ns 2>> $errorLog
-
-    if ($LASTEXITCODE -ge 8) {
-        Add-Content $errorLog "Error copiando: $origen (Código $LASTEXITCODE)"
-    }
-}
