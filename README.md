@@ -20,51 +20,39 @@ Write-Host ""
 # ================================
 Write-Host "Calculando hash de ORIGEN..."
 $hashOrigen = 7z h -scrcSHA256 $origen | Out-String
+$hashOrigen = $hashOrigen -replace "`r`n", "`n"   # Normaliza saltos
+$hashOrigen = $hashOrigen.Trim()
 
 # ================================
 #   HASH DESTINO (SALIDA COMPLETA)
 # ================================
 Write-Host "Calculando hash de DESTINO..."
 $hashDestino = 7z h -scrcSHA256 $destino | Out-String
+$hashDestino = $hashDestino -replace "`r`n", "`n" # Normaliza saltos
+$hashDestino = $hashDestino.Trim()
 
 # ================================
-#   CREAR CUADROS UNICODE
+#   CUADROS UNICODE (solo encabezado)
 # ================================
-function Crear-Cuadro {
-    param(
-        [string]$titulo,
-        [string]$contenido
-    )
+$cuadroOrigen = @"
+╔══════════════════════════════════════════════╗
+║                HASH ORIGEN                   ║
+╚══════════════════════════════════════════════╝
+"@
 
-    $lineas = $contenido -split "`n"
-    $max = ($lineas | Measure-Object -Maximum Length).Maximum
-    if ($max -lt $titulo.Length) { $max = $titulo.Length }
-
-    $cuadro = @()
-    $cuadro += "╔" + ("═" * ($max + 2)) + "╗"
-    $cuadro += "║ " + $titulo.PadRight($max) + " ║"
-    $cuadro += "╠" + ("═" * ($max + 2)) + "╣"
-
-    foreach ($l in $lineas) {
-        $cuadro += "║ " + $l.PadRight($max) + " ║"
-    }
-
-    $cuadro += "╚" + ("═" * ($max + 2)) + "╝"
-    return $cuadro -join "`n"
-}
-
-$cuadroOrigen  = Crear-Cuadro -titulo "HASH ORIGEN"  -contenido $hashOrigen
-$cuadroDestino = Crear-Cuadro -titulo "HASH DESTINO" -contenido $hashDestino
+$cuadroDestino = @"
+╔══════════════════════════════════════════════╗
+║                HASH DESTINO                  ║
+╚══════════════════════════════════════════════╝
+"@
 
 # ================================
 #   GUARDAR EN TXT
 # ================================
 @"
 $cuadroOrigen
+$hashOrigen
 
 $cuadroDestino
+$hashDestino
 "@ | Out-File -FilePath $salida -Encoding UTF8
-
-Write-Host ""
-Write-Host "Hashes generados y guardados en:"
-Write-Host $salida
