@@ -26,7 +26,7 @@ Get-Disk |
 
                 # Construir líneas de información
                 $info = @(
-                    "Información de la unidad USB"
+                    "INFORMACIÓN DE LA UNIDAD USB"
                     "Nombre     : $($vol.FileSystemLabel)"
                     "Letra      : $letra"
                     "Libre (GB) : {0:N2}" -f ($vol.SizeRemaining / 1GB)
@@ -36,7 +36,7 @@ Get-Disk |
                 )
 
                 # Construir líneas de contenido
-                $cont = @("Contenido:")
+                $cont = @("CONTENIDO:")
                 foreach ($c in $contenido) {
                     $cont += " - $c"
                 }
@@ -63,12 +63,23 @@ foreach ($u in $unidades) {
     Write-Host ""
     Write-Host ("╔" + ("═" * ($max + 2)) + "╗")
 
-    foreach ($l in $u.Info) {
+    # TÍTULO CENTRADO
+    $titulo = $u.Info[0]
+    $tituloCentrado = $titulo.PadLeft((($max + $titulo.Length) / 2), " ").PadRight($max)
+    Write-Host ("║ " + $tituloCentrado + " ║")
+
+    # Separador
+    Write-Host ("╠" + ("═" * ($max + 2)) + "╣")
+
+    # Resto de la información
+    foreach ($l in $u.Info[1..($u.Info.Count - 1)]) {
         Write-Host ("║ " + $l.PadRight($max) + " ║")
     }
 
+    # Separador entre INFO y CONTENIDO
     Write-Host ("╠" + ("═" * ($max + 2)) + "╣")
 
+    # Contenido
     foreach ($l in $u.Cont) {
         Write-Host ("║ " + $l.PadRight($max) + " ║")
     }
