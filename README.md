@@ -1,12 +1,21 @@
 # Test_Ciber
 ```md
-Get-Volume |
-    Where-Object { $_.DriveType -eq 'Removable' } |
-    Select-Object `
-        @{Name='Nombre'; Expression={ $_.FileSystemLabel }},
-        @{Name='Letra'; Expression={ $_.DriveLetter }},
-        @{Name='Libre (GB)'; Expression={ "{0:N2}" -f ($_.SizeRemaining / 1GB) }},
-        @{Name='Usado (GB)'; Expression={ "{0:N2}" -f (($_.Size - $_.SizeRemaining) / 1GB) }},
-        @{Name='Total (GB)'; Expression={ "{0:N2}" -f ($_.Size / 1GB) }} |
-    Format-Table -AutoSize
+
+Get-Disk |
+    Where-Object BusType -eq 'USB' |
+    ForEach-Object {
+        $disk = $_
+        Get-Partition -DiskNumber $disk.Number |
+            Where-Object DriveLetter -ne $null |
+            ForEach-Object {
+                $vol = Get-Volume -DriveLetter $_.DriveLetter
+                [PSCustomObject]@{
+                    Nombre      = $vol.FileSystemLabel
+                    Letra       = $vol.DriveLetter
+                    'Libre (GB)'= "{0:N2}" -f ($vol.SizeRemaining / 1GB)
+                    'Usado (GB)'= "{0:N2}" -f (($vol.Size - $vol.SizeRemaining) / 1GB)
+                    'Total (GB)'= "{0:N2}" -f ($vol.Size / 1GB)
+                }
+            }
+    } | Format-Table -AutoSize
 
