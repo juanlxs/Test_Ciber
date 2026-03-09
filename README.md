@@ -1632,6 +1632,297 @@ Start-Menu
 
 
 ```
+## COPIA CON ENCABEZADOS CORPORATIVOS
+```md
+param(
+    [Parameter(Mandatory = $true)]
+    [string]$Path,
+
+    [Parameter(Mandatory = $true)]
+    [string]$DestinationName
+)
+
+Clear-Host
+Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
+Write-Host "                 ENTERPRISE BACKUP SUITE               " -ForegroundColor Yellow
+Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
+Write-Host ""
+
+# ============================
+#   OPTIMIZACIÓN DEL PROCESO
+# ============================
+Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
+Write-Host "                 OPTIMIZACIÓN DEL PROCESO              " -ForegroundColor Yellow
+Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
+
+(Get-Process -Id $PID).PriorityClass = "High"
+
+# ============================
+#   PREPARAR RUTAS
+# ============================
+Write-Host ""
+Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
+Write-Host "                     PREPARANDO RUTAS                  " -ForegroundColor Yellow
+Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
+
+$SourceFolder      = $Path
+$DestinationFolder = $DestinationName
+
+New-Item -ItemType Directory -Path $DestinationFolder -Force | Out-Null
+
+$TimeStamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
+
+$ParentFolder = Split-Path $DestinationFolder -Parent
+$LogsFolder   = Join-Path $ParentFolder "Logs"
+New-Item -ItemType Directory -Path $LogsFolder -Force | Out-Null
+
+$LogFile       = Join-Path $LogsFolder "BackupLog_$TimeStamp.log"
+$DetailedLog   = Join-Path $LogsFolder "Integrity_$TimeStamp.log"
+$RoboCopyLog   = Join-Path $LogsFolder "Robocopy_$TimeStamp.log"
+
+# ============================
+#   LOGGING
+# ============================
+Write-Host ""
+Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
+Write-Host "                     SISTEMA DE LOGS                   " -ForegroundColor Yellow
+Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
+
+function Write-Log {
+    param([string]$Message, [ConsoleColor]$Color = [ConsoleColor]::Gray)
+    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $line = "[$timestamp] $Message"
+    $oldColor = $Host.UI.RawUI.ForegroundColor
+    $Host.UI.RawUI.ForegroundColor = $Color
+    Write-Host $line
+    $Host.UI.RawUI.ForegroundColor = $oldColor
+    Add-Content -Path $LogFile -Value $line
+}
+
+# ============================
+#   HASH PARALELO + PROGRESO GLOBAL
+# ============================
+Write-Host ""
+Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
+Write-Host "                     HASH EN PARALELO                  " -ForegroundColor Yellow
+Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
+
+function Get-FolderHash {
+    param([string]$Folder, [string]$Label)
+
+    $files = Get-ChildItem -Path $Folder -Recurse -File
+    $total = $files.Count
+    $script:counter = 0
+
+    $hashList = $files | ForEach-Object -Parallel {
+        $hash = Get-FileHash -Algorithm SHA256 -Path $_.FullName
+        [PSCustomObject]@{
+            Path = $_.FullName
+            Hash = $hash.Hash
+        }
+    } -ThrottleLimit 12 -AsJob | Receive-Job -Wait -AutoRemoveJob -WriteEvents | ForEach-Object {
+
+        $script:counter++
+        $percent = ($script:counter / $total) * 100
+
+        Write-Progress `
+            -Activity $Label `
+            -Status "Procesando archivos..." `
+            -PercentComplete $percent
+
+        "$($_.Path) = $($_.Hash)"
+    }
+
+    Write-Progress -Activity "Completado" -Completed
+    return $hashList
+}
+
+# ============================
+#   ROBOCOPY CON PROGRESO GLOBAL
+# ============================
+Write-Host ""
+Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
+Write-Host "                     COPIA ROBOCOPY                    " -ForegroundColor Yellow
+Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
+
+function Invoke-RobocopyWithProgress {
+    param(
+        [string]$Source,
+        [string]$Destination,
+        [string]$LogFile
+    )
+
+    $totalFiles = (Get-ChildItem -Path $Source -Recurse -File).Count
+    $processed = 0
+
+    Write-Host "Copiando archivos con ROBOCOPY..."
+
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = "robocopy.exe"
+    $psi.Arguments = "`"$Source`" `"$Destination`" /MIR /MT:32 /R:1 /W:1 /J /NP /NFL /NDL"
+    $psi.RedirectStandardOutput = $true
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+
+    $proc = [System.Diagnostics.Process]::Start($psi)
+
+    while (-not $proc.StandardOutput.EndOfStream) {
+        $line = $proc.StandardOutput.ReadLine()
+
+        if ($line -match "New File" -or $line -match "Newer" -or $line -match "Older") {
+            $processed++
+            $percent = [math]::Min(100, ($processed / $totalFiles) * 100)
+
+            Write-Progress `
+                -Activity "Copiando archivos con ROBOCOPY..." `
+                -Status "Procesando elementos..." `
+                -PercentComplete $percent
+        }
+
+        Add-Content -Path $LogFile -Value $line
+    }
+
+    Write-Progress -Activity "Completado" -Completed
+}
+
+# ============================
+#   COMPARACIÓN DE HASHES
+# ============================
+Write-Host ""
+Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
+Write-Host "                   COMPARACIÓN DE HASHES               " -ForegroundColor Yellow
+Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
+
+function Compare-Hashes {
+    foreach ($file in $sourceMap.Keys) {
+        if ($destMap.ContainsKey($file)) {
+            if ($sourceMap[$file] -eq $destMap[$file]) {
+                Write-Log "OK: $file → HASH IGUAL" "Green"
+            }
+            else {
+                Write-Log "ERROR: $file → HASH DIFERENTE" "Red"
+            }
+        }
+        else {
+            Write-Log "FALTA EN DESTINO: $file" "Red"
+        }
+    }
+}
+
+# ============================
+#   MENÚ PROFESIONAL
+# ============================
+function Show-Menu {
+    Clear-Host
+    Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
+    Write-Host "                 ENTERPRISE BACKUP SUITE               " -ForegroundColor Yellow
+    Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "  1. Ejecutar proceso completo de sincronización (MIRROR)" -ForegroundColor Green
+    Write-Host "  2. Generar hashes del directorio de origen" -ForegroundColor White
+    Write-Host "  3. Realizar copia de seguridad (solo ROBOCOPY)" -ForegroundColor White
+    Write-Host "  4. Generar hashes del directorio de destino" -ForegroundColor White
+    Write-Host "  5. Comparar integridad entre origen y destino" -ForegroundColor White
+    Write-Host "  6. Finalizar y cerrar la herramienta" -ForegroundColor Red
+    Write-Host ""
+}
+
+function Start-Menu {
+    do {
+        Show-Menu
+        $choice = Read-Host "Seleccione una opción"
+
+        switch ($choice) {
+
+            "1" {
+                Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
+                Write-Host "         EJECUTANDO PROCESO COMPLETO DE BACKUP         " -ForegroundColor Yellow
+                Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
+
+                Write-Log "=== PROCESO COMPLETO DE SINCRONIZACIÓN ===" "Cyan"
+
+                $SourceHashes = Get-FolderHash -Folder $SourceFolder -Label "Hashes ORIGEN"
+                Invoke-RobocopyWithProgress -Source $SourceFolder -Destination $DestinationFolder -LogFile $RoboCopyLog
+                $DestHashes = Get-FolderHash -Folder $DestinationFolder -Label "Hashes DESTINO"
+
+                $global:sourceMap = @{}
+                foreach ($line in $SourceHashes) {
+                    $parts = $line -split " = "
+                    $sourceMap[$parts[0].Replace($SourceFolder,"")] = $parts[1]
+                }
+
+                $global:destMap = @{}
+                foreach ($line in $DestHashes) {
+                    $parts = $line -split " = "
+                    $destMap[$parts[0].Replace($DestinationFolder,"")] = $parts[1]
+                }
+
+                Compare-Hashes
+                Pause
+            }
+
+            "2" {
+                Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
+                Write-Host "                 HASHES DEL DIRECTORIO ORIGEN          " -ForegroundColor Yellow
+                Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
+
+                Write-Log "=== HASHES DEL ORIGEN ===" "Cyan"
+                $global:SourceHashes = Get-FolderHash -Folder $SourceFolder -Label "Hashes ORIGEN"
+                Pause
+            }
+
+            "3" {
+                Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
+                Write-Host "                     COPIA SOLO ROBOCOPY               " -ForegroundColor Yellow
+                Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
+
+                Write-Log "=== COPIA SOLO ROBOCOPY ===" "Cyan"
+                Invoke-RobocopyWithProgress -Source $SourceFolder -Destination $DestinationFolder -LogFile $RoboCopyLog
+                Pause
+            }
+
+            "4" {
+                Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
+                Write-Host "                 HASHES DEL DIRECTORIO DESTINO         " -ForegroundColor Yellow
+                Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
+
+                Write-Log "=== HASHES DEL DESTINO ===" "Cyan"
+                $global:DestHashes = Get-FolderHash -Folder $DestinationFolder -Label "Hashes DESTINO"
+                Pause
+            }
+
+            "5" {
+                Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
+                Write-Host "                 COMPARACIÓN DE INTEGRIDAD             " -ForegroundColor Yellow
+                Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
+
+                Write-Log "=== COMPARACIÓN DE INTEGRIDAD ===" "Cyan"
+                Compare-Hashes
+                Pause
+            }
+
+            "6" {
+                Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
+                Write-Host "                     CERRANDO SISTEMA                  " -ForegroundColor Red
+                Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
+                return
+            }
+
+            default {
+                Write-Host "Opción no válida. Intente nuevamente." -ForegroundColor Red
+                Start-Sleep -Seconds 1
+            }
+        }
+
+    } while ($true)
+}
+
+# ============================
+#   EJECUCIÓN DEL MENÚ
+# ============================
+Start-Menu
+
+```
 
 
 
