@@ -984,16 +984,6 @@ function Invoke-RobocopyWithProgress {
 }
 
 # ============================
-#   INICIO
-# ============================
-$globalStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
-
-Write-Log "===== INICIO DEL PROCESO ULTRA-RÁPIDO =====" "Cyan"
-Write-Log "Origen: $SourceFolder"
-Write-Log "Destino: $DestinationFolder"
-Write-Log "-----------------------------------------------"
-
-# ============================
 # 1. HASH ORIGEN (PARALELO)
 # ============================
 Write-Log "[PASO 1] Calculando hashes del ORIGEN (paralelo)..." "Yellow"
@@ -1064,6 +1054,93 @@ foreach ($file in $sourceMap.Keys) {
 $sw4.Stop()
 Write-Log ("Tiempo paso 4: {0:N1} segundos" -f $sw4.Elapsed.TotalSeconds)
 Write-Log "-----------------------------------------------"
+
+function Show-Menu {
+    Clear-Host
+    Write-Host "======================================================" -ForegroundColor Cyan
+    Write-Host "                SISTEMA DE BACKUP AVANZADO            " -ForegroundColor Yellow
+    Write-Host "======================================================" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "  1. Ejecutar proceso completo de sincronización (MIRROR)" -ForegroundColor Green
+    Write-Host "  2. Generar hashes del directorio de origen" -ForegroundColor White
+    Write-Host "  3. Realizar copia de seguridad (solo ROBOCOPY)" -ForegroundColor White
+    Write-Host "  4. Generar hashes del directorio de destino" -ForegroundColor White
+    Write-Host "  5. Comparar integridad entre origen y destino" -ForegroundColor White
+    Write-Host "  6. Finalizar y cerrar la herramienta" -ForegroundColor Red
+    Write-Host ""
+}
+
+function Start-Menu {
+    do {
+        Show-Menu
+        $choice = Read-Host "Seleccione una opción"
+
+        switch ($choice) {
+
+            "1" {
+                Write-Log "=== PROCESO COMPLETO DE SINCRONIZACIÓN ===" "Cyan"
+
+                $SourceHashes = Get-FolderHash -Folder $SourceFolder -Label "Hashes ORIGEN"
+                Invoke-RobocopyWithProgress -Source $SourceFolder -Destination $DestinationFolder -LogFile $RoboCopyLog
+                $DestHashes = Get-FolderHash -Folder $DestinationFolder -Label "Hashes DESTINO"
+
+                # Construcción de mapas
+                $global:sourceMap = @{}
+                foreach ($line in $SourceHashes) {
+                    $parts = $line -split " = "
+                    $sourceMap[$parts[0].Replace($SourceFolder,"")] = $parts[1]
+                }
+
+                $global:destMap = @{}
+                foreach ($line in $DestHashes) {
+                    $parts = $line -split " = "
+                    $destMap[$parts[0].Replace($DestinationFolder,"")] = $parts[1]
+                }
+
+                Compare-Hashes
+                Pause
+            }
+
+            "2" {
+                Write-Log "=== HASHES DEL ORIGEN ===" "Cyan"
+                $global:SourceHashes = Get-FolderHash -Folder $SourceFolder -Label "Hashes ORIGEN"
+                Pause
+            }
+
+            "3" {
+                Write-Log "=== COPIA SOLO ROBOCOPY ===" "Cyan"
+                Invoke-RobocopyWithProgress -Source $SourceFolder -Destination $DestinationFolder -LogFile $RoboCopyLog
+                Pause
+            }
+
+            "4" {
+                Write-Log "=== HASHES DEL DESTINO ===" "Cyan"
+                $global:DestHashes = Get-FolderHash -Folder $DestinationFolder -Label "Hashes DESTINO"
+                Pause
+            }
+
+            "5" {
+                Write-Log "=== COMPARACIÓN DE INTEGRIDAD ===" "Cyan"
+                Compare-Hashes
+                Pause
+            }
+
+            "6" {
+                Write-Host "Cerrando la herramienta..." -ForegroundColor Red
+                return
+            }
+
+            default {
+                Write-Host "Opción no válida. Intente nuevamente." -ForegroundColor Red
+                Start-Sleep -Seconds 1
+            }
+        }
+
+    } while ($true)
+}
+
+Start-Menu
+
 
 # ============================
 # RESUMEN FINAL
