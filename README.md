@@ -984,77 +984,27 @@ function Invoke-RobocopyWithProgress {
 }
 
 # ============================
-# 1. HASH ORIGEN (PARALELO)
+#   COMPARACIÓN DE HASHES
 # ============================
-Write-Log "[PASO 1] Calculando hashes del ORIGEN (paralelo)..." "Yellow"
-$sw1 = [System.Diagnostics.Stopwatch]::StartNew()
-
-$SourceHashes = Get-FolderHash -Folder $SourceFolder -Label "Calculando hashes del ORIGEN..."
-
-$sw1.Stop()
-Write-Log ("Tiempo paso 1: {0:N1} segundos" -f $sw1.Elapsed.TotalSeconds)
-Write-Log "-----------------------------------------------"
-
-# ============================
-# 2. ROBOCOPY ULTRA-RÁPIDO
-# ============================
-Write-Log "[PASO 2] Copiando con ROBOCOPY ULTRA-RÁPIDO..." "Yellow"
-$sw2 = [System.Diagnostics.Stopwatch]::StartNew()
-
-Invoke-RobocopyWithProgress -Source $SourceFolder -Destination $DestinationFolder -LogFile $RoboCopyLog
-
-$sw2.Stop()
-Write-Log ("Tiempo paso 2: {0:N1} segundos" -f $sw2.Elapsed.TotalSeconds)
-Write-Log "-----------------------------------------------"
-
-# ============================
-# 3. HASH DESTINO (PARALELO)
-# ============================
-Write-Log "[PASO 3] Calculando hashes del DESTINO (paralelo)..." "Yellow"
-$sw3 = [System.Diagnostics.Stopwatch]::StartNew()
-
-$DestHashes = Get-FolderHash -Folder $DestinationFolder -Label "Calculando hashes del DESTINO..."
-
-$sw3.Stop()
-Write-Log ("Tiempo paso 3: {0:N1} segundos" -f $sw3.Elapsed.TotalSeconds)
-Write-Log "-----------------------------------------------"
-
-# ============================
-# 4. COMPARACIÓN
-# ============================
-Write-Log "[PASO 4] Comparando integridad ORIGEN → DESTINO..." "Yellow"
-$sw4 = [System.Diagnostics.Stopwatch]::StartNew()
-
-$sourceMap = @{}
-foreach ($line in $SourceHashes) {
-    $parts = $line -split " = "
-    $sourceMap[$parts[0].Replace($SourceFolder,"")] = $parts[1]
-}
-
-$destMap = @{}
-foreach ($line in $DestHashes) {
-    $parts = $line -split " = "
-    $destMap[$parts[0].Replace($DestinationFolder,"")] = $parts[1]
-}
-
-foreach ($file in $sourceMap.Keys) {
-    if ($destMap.ContainsKey($file)) {
-        if ($sourceMap[$file] -eq $destMap[$file]) {
-            Write-Log "OK: $file → HASH IGUAL" "Green"
+function Compare-Hashes {
+    foreach ($file in $sourceMap.Keys) {
+        if ($destMap.ContainsKey($file)) {
+            if ($sourceMap[$file] -eq $destMap[$file]) {
+                Write-Log "OK: $file → HASH IGUAL" "Green"
+            }
+            else {
+                Write-Log "ERROR: $file → HASH DIFERENTE" "Red"
+            }
         }
         else {
-            Write-Log "ERROR: $file → HASH DIFERENTE" "Red"
+            Write-Log "FALTA EN DESTINO: $file" "Red"
         }
-    }
-    else {
-        Write-Log "FALTA EN DESTINO: $file" "Red"
     }
 }
 
-$sw4.Stop()
-Write-Log ("Tiempo paso 4: {0:N1} segundos" -f $sw4.Elapsed.TotalSeconds)
-Write-Log "-----------------------------------------------"
-
+# ============================
+#   MENÚ PROFESIONAL
+# ============================
 function Show-Menu {
     Clear-Host
     Write-Host "======================================================" -ForegroundColor Cyan
@@ -1084,7 +1034,6 @@ function Start-Menu {
                 Invoke-RobocopyWithProgress -Source $SourceFolder -Destination $DestinationFolder -LogFile $RoboCopyLog
                 $DestHashes = Get-FolderHash -Folder $DestinationFolder -Label "Hashes DESTINO"
 
-                # Construcción de mapas
                 $global:sourceMap = @{}
                 foreach ($line in $SourceHashes) {
                     $parts = $line -split " = "
@@ -1139,18 +1088,11 @@ function Start-Menu {
     } while ($true)
 }
 
+# ============================
+#   EJECUCIÓN DEL MENÚ
+# ============================
 Start-Menu
 
-
-# ============================
-# RESUMEN FINAL
-# ============================
-$globalStopwatch.Stop()
-
-Write-Log "========== RESUMEN FINAL ==========" "Cyan"
-Write-Log ("Tiempo total: {0:N1} segundos" -f $globalStopwatch.Elapsed.TotalSeconds)
-Write-Log "Estado final: COMPLETADO SIN ERRORES"
-Write-Log "==================================" "Cyan"
 
 ```
 
