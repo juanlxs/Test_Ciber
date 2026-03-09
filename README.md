@@ -862,197 +862,219 @@ Write-Log "==================================" "Cyan"
 ## Copia Segura con menu
 
 ```md
-este es mi script: como lo implimento? param( [Parameter(Mandatory = $true)] [string]$Path,
+param(
+    [Parameter(Mandatory = $true)]
+    [string]$Path,
 
-[Parameter(Mandatory = $true)]
-[string]$DestinationName
-
-
+    [Parameter(Mandatory = $true)]
+    [string]$DestinationName
 )
 
-============================
+# ============================
+#   OPTIMIZACIÓN DEL PROCESO
+# ============================
+(Get-Process -Id $PID).PriorityClass = "High"
 
-OPTIMIZACIÓN DEL PROCESO
-
-============================
-
-(Get-Process -Id $PID).PriorityClass = “High”
-
-============================
-
-PREPARAR RUTAS
-
-============================
-
-$SourceFolder      = $Path $DestinationFolder = $DestinationName
+# ============================
+#   PREPARAR RUTAS
+# ============================
+$SourceFolder      = $Path
+$DestinationFolder = $DestinationName
 
 New-Item -ItemType Directory -Path $DestinationFolder -Force | Out-Null
 
-$TimeStamp = Get-Date -Format “yyyy-MM-dd_HH-mm-ss”
+$TimeStamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
 
-$ParentFolder = Split-Path $DestinationFolder -Parent $LogsFolder   = Join-Path $ParentFolder “Logs” New-Item -ItemType Directory -Path $LogsFolder -Force | Out-Null
+$ParentFolder = Split-Path $DestinationFolder -Parent
+$LogsFolder   = Join-Path $ParentFolder "Logs"
+New-Item -ItemType Directory -Path $LogsFolder -Force | Out-Null
 
-$LogFile       = Join-Path $LogsFolder “BackupLog_$TimeStamp.log” $DetailedLog   = Join-Path $LogsFolder “Integrity_$TimeStamp.log” $RoboCopyLog   = Join-Path $LogsFolder “Robocopy_$TimeStamp.log”
+$LogFile       = Join-Path $LogsFolder "BackupLog_$TimeStamp.log"
+$DetailedLog   = Join-Path $LogsFolder "Integrity_$TimeStamp.log"
+$RoboCopyLog   = Join-Path $LogsFolder "Robocopy_$TimeStamp.log"
 
-============================
-
-LOGGING
-
-============================
-
-function Write-Log { param([string]$Message, [ConsoleColor]$Color = [ConsoleColor]::Gray) $timestamp = Get-Date -Format “yyyy-MM-dd HH:mm:ss” $line = “[$timestamp] $Message” $oldColor = $Host.UI.RawUI.ForegroundColor $Host.UI.RawUI.ForegroundColor = $Color Write-Host $line $Host.UI.RawUI.ForegroundColor = $oldColor Add-Content -Path $LogFile -Value $line }
-
-============================
-
-HASH PARALELO + PROGRESO GLOBAL
-
-============================
-
-function Get-FolderHash { param([string]$Folder, [string]$Label)
-
-$files = Get-ChildItem -Path $Folder -Recurse -File
-$total = $files.Count
-$script:counter = 0
-
-$hashList = $files | ForEach-Object -Parallel {
-    $hash = Get-FileHash -Algorithm SHA256 -Path $_.FullName
-    [PSCustomObject]@{
-        Path = $_.FullName
-        Hash = $hash.Hash
-    }
-} -ThrottleLimit 12 -AsJob | Receive-Job -Wait -AutoRemoveJob -WriteEvents | ForEach-Object {
-
-    $script:counter++
-    $percent = ($script:counter / $total) * 100
-
-    Write-Progress `
-        -Activity $Label `
-        -Status "Procesando archivos..." `
-        -PercentComplete $percent
-
-    "$($_.Path) = $($_.Hash)"
-}
-
-Write-Progress -Activity "Completado" -Completed
-return $hashList
-
-
-}
-
-============================
-
-ROBOCOPY CON PROGRESO GLOBAL
-
-============================
-
-function Invoke-RobocopyWithProgress { param( [string]$Source, [string]$Destination, [string]$LogFile )
-
-$totalFiles = (Get-ChildItem -Path $Source -Recurse -File).Count
-$processed = 0
-
-Write-Host "Copiando archivos con ROBOCOPY..."
-
-$psi = New-Object System.Diagnostics.ProcessStartInfo
-$psi.FileName = "robocopy.exe"
-$psi.Arguments = "`"$Source`" `"$Destination`" /MIR /MT:32 /R:1 /W:1 /J /NP /NFL /NDL"
-$psi.RedirectStandardOutput = $true
-$psi.UseShellExecute = $false
-$psi.CreateNoWindow = $true
-
-$proc = [System.Diagnostics.Process]::Start($psi)
-
-while (-not $proc.StandardOutput.EndOfStream) {
-    $line = $proc.StandardOutput.ReadLine()
-
-    if ($line -match "New File" -or $line -match "Newer" -or $line -match "Older") {
-        $processed++
-        $percent = [math]::Min(100, ($processed / $totalFiles) * 100)
-
-        Write-Progress `
-            -Activity "Copiando archivos con ROBOCOPY..." `
-            -Status "Procesando elementos..." `
-            -PercentComplete $percent
-    }
-
+# ============================
+#   LOGGING
+# ============================
+function Write-Log {
+    param([string]$Message, [ConsoleColor]$Color = [ConsoleColor]::Gray)
+    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $line = "[$timestamp] $Message"
+    $oldColor = $Host.UI.RawUI.ForegroundColor
+    $Host.UI.RawUI.ForegroundColor = $Color
+    Write-Host $line
+    $Host.UI.RawUI.ForegroundColor = $oldColor
     Add-Content -Path $LogFile -Value $line
 }
 
-Write-Progress -Activity "Completado" -Completed
+# ============================
+#   HASH PARALELO + PROGRESO GLOBAL
+# ============================
+function Get-FolderHash {
+    param([string]$Folder, [string]$Label)
 
+    $files = Get-ChildItem -Path $Folder -Recurse -File
+    $total = $files.Count
+    $script:counter = 0
 
+    $hashList = $files | ForEach-Object -Parallel {
+        $hash = Get-FileHash -Algorithm SHA256 -Path $_.FullName
+        [PSCustomObject]@{
+            Path = $_.FullName
+            Hash = $hash.Hash
+        }
+    } -ThrottleLimit 12 -AsJob | Receive-Job -Wait -AutoRemoveJob -WriteEvents | ForEach-Object {
+
+        $script:counter++
+        $percent = ($script:counter / $total) * 100
+
+        Write-Progress `
+            -Activity $Label `
+            -Status "Procesando archivos..." `
+            -PercentComplete $percent
+
+        "$($_.Path) = $($_.Hash)"
+    }
+
+    Write-Progress -Activity "Completado" -Completed
+    return $hashList
 }
 
-============================
+# ============================
+#   ROBOCOPY CON PROGRESO GLOBAL
+# ============================
+function Invoke-RobocopyWithProgress {
+    param(
+        [string]$Source,
+        [string]$Destination,
+        [string]$LogFile
+    )
 
-INICIO
+    $totalFiles = (Get-ChildItem -Path $Source -Recurse -File).Count
+    $processed = 0
 
-============================
+    Write-Host "Copiando archivos con ROBOCOPY..."
 
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = "robocopy.exe"
+    $psi.Arguments = "`"$Source`" `"$Destination`" /MIR /MT:32 /R:1 /W:1 /J /NP /NFL /NDL"
+    $psi.RedirectStandardOutput = $true
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+
+    $proc = [System.Diagnostics.Process]::Start($psi)
+
+    while (-not $proc.StandardOutput.EndOfStream) {
+        $line = $proc.StandardOutput.ReadLine()
+
+        if ($line -match "New File" -or $line -match "Newer" -or $line -match "Older") {
+            $processed++
+            $percent = [math]::Min(100, ($processed / $totalFiles) * 100)
+
+            Write-Progress `
+                -Activity "Copiando archivos con ROBOCOPY..." `
+                -Status "Procesando elementos..." `
+                -PercentComplete $percent
+        }
+
+        Add-Content -Path $LogFile -Value $line
+    }
+
+    Write-Progress -Activity "Completado" -Completed
+}
+
+# ============================
+#   INICIO
+# ============================
 $globalStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
 
-Write-Log “===== INICIO DEL PROCESO ULTRA-RÁPIDO =====” “Cyan” Write-Log “Origen: $SourceFolder” Write-Log “Destino: $DestinationFolder” Write-Log “———————————————–”
+Write-Log "===== INICIO DEL PROCESO ULTRA-RÁPIDO =====" "Cyan"
+Write-Log "Origen: $SourceFolder"
+Write-Log "Destino: $DestinationFolder"
+Write-Log "-----------------------------------------------"
 
-============================
+# ============================
+# 1. HASH ORIGEN (PARALELO)
+# ============================
+Write-Log "[PASO 1] Calculando hashes del ORIGEN (paralelo)..." "Yellow"
+$sw1 = [System.Diagnostics.Stopwatch]::StartNew()
 
-1. HASH ORIGEN (PARALELO)
+$SourceHashes = Get-FolderHash -Folder $SourceFolder -Label "Calculando hashes del ORIGEN..."
 
-============================
+$sw1.Stop()
+Write-Log ("Tiempo paso 1: {0:N1} segundos" -f $sw1.Elapsed.TotalSeconds)
+Write-Log "-----------------------------------------------"
 
-Write-Log “[PASO 1] Calculando hashes del ORIGEN (paralelo)…” “Yellow” $sw1 = [System.Diagnostics.Stopwatch]::StartNew()
-
-$SourceHashes = Get-FolderHash -Folder $SourceFolder -Label “Calculando hashes del ORIGEN…”
-
-$sw1.Stop() Write-Log (“Tiempo paso 1: {0:N1} segundos” -f $sw1.Elapsed.TotalSeconds) Write-Log “———————————————–”
-
-============================
-
-2. ROBOCOPY ULTRA-RÁPIDO
-
-============================
-
-Write-Log “[PASO 2] Copiando con ROBOCOPY ULTRA-RÁPIDO…” “Yellow” $sw2 = [System.Diagnostics.Stopwatch]::StartNew()
+# ============================
+# 2. ROBOCOPY ULTRA-RÁPIDO
+# ============================
+Write-Log "[PASO 2] Copiando con ROBOCOPY ULTRA-RÁPIDO..." "Yellow"
+$sw2 = [System.Diagnostics.Stopwatch]::StartNew()
 
 Invoke-RobocopyWithProgress -Source $SourceFolder -Destination $DestinationFolder -LogFile $RoboCopyLog
 
-$sw2.Stop() Write-Log (“Tiempo paso 2: {0:N1} segundos” -f $sw2.Elapsed.TotalSeconds) Write-Log “———————————————–”
+$sw2.Stop()
+Write-Log ("Tiempo paso 2: {0:N1} segundos" -f $sw2.Elapsed.TotalSeconds)
+Write-Log "-----------------------------------------------"
 
-============================
+# ============================
+# 3. HASH DESTINO (PARALELO)
+# ============================
+Write-Log "[PASO 3] Calculando hashes del DESTINO (paralelo)..." "Yellow"
+$sw3 = [System.Diagnostics.Stopwatch]::StartNew()
 
-3. HASH DESTINO (PARALELO)
+$DestHashes = Get-FolderHash -Folder $DestinationFolder -Label "Calculando hashes del DESTINO..."
 
-============================
+$sw3.Stop()
+Write-Log ("Tiempo paso 3: {0:N1} segundos" -f $sw3.Elapsed.TotalSeconds)
+Write-Log "-----------------------------------------------"
 
-Write-Log “[PASO 3] Calculando hashes del DESTINO (paralelo)…” “Yellow” $sw3 = [System.Diagnostics.Stopwatch]::StartNew()
+# ============================
+# 4. COMPARACIÓN
+# ============================
+Write-Log "[PASO 4] Comparando integridad ORIGEN → DESTINO..." "Yellow"
+$sw4 = [System.Diagnostics.Stopwatch]::StartNew()
 
-$DestHashes = Get-FolderHash -Folder $DestinationFolder -Label “Calculando hashes del DESTINO…”
+$sourceMap = @{}
+foreach ($line in $SourceHashes) {
+    $parts = $line -split " = "
+    $sourceMap[$parts[0].Replace($SourceFolder,"")] = $parts[1]
+}
 
-$sw3.Stop() Write-Log (“Tiempo paso 3: {0:N1} segundos” -f $sw3.Elapsed.TotalSeconds) Write-Log “———————————————–”
+$destMap = @{}
+foreach ($line in $DestHashes) {
+    $parts = $line -split " = "
+    $destMap[$parts[0].Replace($DestinationFolder,"")] = $parts[1]
+}
 
-============================
+foreach ($file in $sourceMap.Keys) {
+    if ($destMap.ContainsKey($file)) {
+        if ($sourceMap[$file] -eq $destMap[$file]) {
+            Write-Log "OK: $file → HASH IGUAL" "Green"
+        }
+        else {
+            Write-Log "ERROR: $file → HASH DIFERENTE" "Red"
+        }
+    }
+    else {
+        Write-Log "FALTA EN DESTINO: $file" "Red"
+    }
+}
 
-4. COMPARACIÓN
+$sw4.Stop()
+Write-Log ("Tiempo paso 4: {0:N1} segundos" -f $sw4.Elapsed.TotalSeconds)
+Write-Log "-----------------------------------------------"
 
-============================
-
-Write-Log “[PASO 4] Comparando integridad ORIGEN → DESTINO…” “Yellow” $sw4 = [System.Diagnostics.Stopwatch]::StartNew()
-
-$sourceMap = @{} foreach ($line in $SourceHashes) { $parts = $line -split “ = “ $sourceMap[$parts[0].Replace($SourceFolder,””)] = $parts[1] }
-
-$destMap = @{} foreach ($line in $DestHashes) { $parts = $line -split “ = “ $destMap[$parts[0].Replace($DestinationFolder,””)] = $parts[1] }
-
-foreach ($file in $sourceMap.Keys) { if ($destMap.ContainsKey($file)) { if ($sourceMap[$file] -eq $destMap[$file]) { Write-Log “OK: $file → HASH IGUAL” “Green” } else { Write-Log “ERROR: $file → HASH DIFERENTE” “Red” } } else { Write-Log “FALTA EN DESTINO: $file” “Red” } }
-
-$sw4.Stop() Write-Log (“Tiempo paso 4: {0:N1} segundos” -f $sw4.Elapsed.TotalSeconds) Write-Log “———————————————–”
-
-============================
-
-RESUMEN FINAL
-
-============================
-
+# ============================
+# RESUMEN FINAL
+# ============================
 $globalStopwatch.Stop()
 
-Write-Log “========== RESUMEN FINAL ==========” “Cyan” Write-Log (“Tiempo total: {0:N1} segundos” -f $globalStopwatch.Elapsed.TotalSeconds) Write-Log “Estado final: COMPLETADO SIN ERRORES” Write-Log “==================================” “Cyan”
+Write-Log "========== RESUMEN FINAL ==========" "Cyan"
+Write-Log ("Tiempo total: {0:N1} segundos" -f $globalStopwatch.Elapsed.TotalSeconds)
+Write-Log "Estado final: COMPLETADO SIN ERRORES"
+Write-Log "==================================" "Cyan"
+
 ```
 
 
