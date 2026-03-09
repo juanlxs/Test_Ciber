@@ -202,5 +202,277 @@ Write-Log "==================================" "Cyan"
 
 
 ```md
+param(
+    [Parameter(Mandatory = $true)]
+    [string]$Path,   # Carpeta origen
+
+    [Parameter(Mandatory = $true)]
+    [string]$DestinationName  # Ruta COMPLETA de destino
+)
+
+# ============================
+#   PREPARAR RUTAS
+# ============================
+$SourceFolder      = $Path
+$DestinationFolder = $DestinationName
+
+# Crear carpeta destino si no existe
+New-Item -ItemType Directory -Path $DestinationFolder -Force | Out-Null
+
+# Timestamp profesional (formato original)
+$TimeStamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
+
+# Carpeta superior al destino
+$ParentFolder = Split-Path $DestinationFolder -Parent
+
+# Carpeta Logs en la capa superior
+$LogsFolder = Join-Path $ParentFolder "Logs"
+New-Item -ItemType Directory -Path $LogsFolder -Force | Out-Null
+
+# Logs con nombres cortos + timestamp
+$LogFile       = Join-Path $LogsFolder "BackupLog_$TimeStamp.log"
+$DetailedLog   = Join-Path $LogsFolder "Integrity_$TimeStamp.log"
+$RoboCopyLog   = Join-Path $LogsFolder "Robocopy_$TimeStamp.log"
+
+# ============================
+#   FUNCIONES
+# ============================
+function Write-Log {
+    param([string]$Message, [ConsoleColor]$Color = [ConsoleColor]::Gray)
+    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $line = "[$timestamp] $Message"
+    $oldColor = $Host.UI.RawUI.ForegroundColor
+    $Host.UI.RawUI.ForegroundColor = $Color
+    Write-Host $line
+    $Host.UI.RawUI.ForegroundColor = $oldColor
+    Add-Content -Path $LogFile -Value $line
+}
+
+function Format-SizeMB {
+    param([long]$Bytes)
+    if ($Bytes -le 0) { return "0 MB" }
+    return ("{0:N0} MB" -f ($Bytes / 1MB))
+}
+
+function Get-FolderHash {
+    param([string]$Folder)
+
+    $files = Get-ChildItem -Path $Folder -Recurse -File
+    $hashList = @()
+
+    foreach ($file in $files) {
+        $hash = Get-FileHash -Algorithm SHA256 -Path $file.FullName
+        $hashList += "$($hash.Path) = $($hash.Hash)"
+    }
+
+    return $hashList
+}
+
+function Get-DiskInfoFromPath {
+    param([string]$FolderPath)
+
+    $driveLetter = $FolderPath.Substring(0,1)
+    $disk = Get-CimInstance Win32_LogicalDisk | Where-Object { $_.DeviceID -eq "$driveLetter`:" }
+
+    $physical = Get-CimInstance Win32_DiskDrive |
+        Where-Object { $_.DeviceID -like "*$driveLetter*" }
+
+    return [PSCustomObject]@{
+        DriveLetter = $driveLetter
+        VolumeName  = $disk.VolumeName
+        FileSystem  = $disk.FileSystem
+        SizeGB      = "{0:N2} GB" -f ($disk.Size / 1GB)
+        FreeGB      = "{0:N2} GB" -f ($disk.FreeSpace / 1GB)
+        Serial      = $physical.SerialNumber
+        Model       = $physical.Model
+        Interface   = $physical.InterfaceType
+    }
+}
+
+$globalStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+
+Write-Log "===== INICIO DEL PROCESO DE COPIA MIRROR =====" "Cyan"
+Write-Log "Origen: $SourceFolder"
+Write-Log "Destino: $DestinationFolder"
+Write-Log "-----------------------------------------------"
+
+# ============================
+#   INFORMACIÓN DE LOS DISCOS
+# ============================
+$DiskSourceInfo = Get-DiskInfoFromPath -FolderPath $SourceFolder
+$DiskDestInfo   = Get-DiskInfoFromPath -FolderPath $DestinationFolder
+
+Write-Log "===== INFORMACIÓN DE LOS DISCOS =====" "Cyan"
+Write-Log "Disco ORIGEN ($($DiskSourceInfo.DriveLetter):)"
+Write-Log "  Modelo:     $($DiskSourceInfo.Model)"
+Write-Log "  Serial:     $($DiskSourceInfo.Serial)"
+Write-Log "  Sistema:    $($DiskSourceInfo.FileSystem)"
+Write-Log "  Tamaño:     $($DiskSourceInfo.SizeGB)"
+Write-Log "  Libre:      $($DiskSourceInfo.FreeGB)"
+Write-Log ""
+Write-Log "Disco DESTINO ($($DiskDestInfo.DriveLetter):)"
+Write-Log "  Modelo:     $($DiskDestInfo.Model)"
+Write-Log "  Serial:     $($DiskDestInfo.Serial)"
+Write-Log "  Sistema:    $($DiskDestInfo.FileSystem)"
+Write-Log "  Tamaño:     $($DiskDestInfo.SizeGB)"
+Write-Log "  Libre:      $($DiskDestInfo.FreeGB)"
+Write-Log "-----------------------------------------------"
+
+# ============================
+# 1. HASH ORIGEN
+# ============================
+$sw1 = [System.Diagnostics.Stopwatch]::StartNew()
+Write-Log "[PASO 1] Calculando hash SHA-256 de la carpeta origen..." "Yellow"
+
+$SourceHashes = Get-FolderHash -Folder $SourceFolder
+$SourceHashes | ForEach-Object { Write-Log "ORIGEN: $_" }
+
+$sw1.Stop()
+Write-Log ("Tiempo paso 1: {0:N1} segundos" -f $sw1.Elapsed.TotalSeconds)
+Write-Log "-----------------------------------------------"
+
+# ============================
+# 2. COPIA MIRROR CON ROBOCOPY
+# ============================
+$sw2 = [System.Diagnostics.Stopwatch]::StartNew()
+Write-Log "[PASO 2] Copiando con ROBOCOPY (modo MIRROR)..." "Yellow"
+
+$cmd = "robocopy `"$SourceFolder`" `"$DestinationFolder`" /MIR /R:2 /W:2 /NFL /NDL /NP /LOG:`"$RoboCopyLog`""
+Write-Log "Ejecutando: $cmd"
+
+cmd.exe /c $cmd | ForEach-Object { Write-Log "ROBOCOPY: $_" }
+
+$sw2.Stop()
+Write-Log ("Tiempo paso 2: {0:N1} segundos" -f $sw2.Elapsed.TotalSeconds)
+Write-Log "-----------------------------------------------"
+
+# ============================
+# 3. HASH DESTINO
+# ============================
+$sw3 = [System.Diagnostics.Stopwatch]::StartNew()
+Write-Log "[PASO 3] Calculando hash SHA-256 de la carpeta destino..." "Yellow"
+
+$DestHashes = Get-FolderHash -Folder $DestinationFolder
+$DestHashes | ForEach-Object { Write-Log "DESTINO: $_" }
+
+$sw3.Stop()
+Write-Log ("Tiempo paso 3: {0:N1} segundos" -f $sw3.Elapsed.TotalSeconds)
+Write-Log "-----------------------------------------------"
+
+# ============================
+# 3B. LOG DETALLADO PROFESIONAL
+# ============================
+Write-Log "[PASO 3B] Generando log detallado profesional de hashes y timestamps..." "Yellow"
+
+@"
+============================================================
+                FILE HASH & METADATA REPORT
+============================================================
+
+Generated on: $(Get-Date -Format "yyyy-MM-dd HH:mm:ss")
+Source Folder: $SourceFolder
+Destination Folder: $DestinationFolder
+------------------------------------------------------------
+
+"@ | Out-File $DetailedLog
+
+function Write-DetailedEntry {
+    param(
+        [string]$FilePath,
+        [string]$HashValue
+    )
+
+    if (Test-Path $FilePath) {
+        $item = Get-Item $FilePath
+        $sizeBytes = $item.Length
+        $sizeGB = "{0:N6}" -f ($sizeBytes / 1GB)
+
+        $entry = @"
+FILE PATH      : $FilePath
+HASH (SHA256)  : $HashValue
+SIZE (BYTES)   : $sizeBytes
+SIZE (GB)      : $sizeGB
+CREATED        : $($item.CreationTime)
+MODIFIED       : $($item.LastWriteTime)
+ACCESSED       : $($item.LastAccessTime)
+------------------------------------------------------------
+
+"@
+
+        Add-Content -Path $DetailedLog -Value $entry
+    }
+}
+
+Add-Content -Path $DetailedLog -Value "====================== ORIGIN FILES ========================`n"
+foreach ($line in $SourceHashes) {
+    $parts = $line -split " = "
+    Write-DetailedEntry -FilePath $parts[0] -HashValue $parts[1]
+}
+
+Add-Content -Path $DetailedLog -Value "===================== DESTINATION FILES ====================`n"
+foreach ($line in $DestHashes) {
+    $parts = $line -split " = "
+    Write-DetailedEntry -FilePath $parts[0] -HashValue $parts[1]
+}
+
+Add-Content -Path $DetailedLog -Value "========================= END REPORT ========================"
+
+Write-Log "Log detallado generado: $DetailedLog" "Green"
+Write-Log "-----------------------------------------------"
+
+# ============================
+# 4. COMPARACIÓN HASHES
+# ============================
+$sw4 = [System.Diagnostics.Stopwatch]::StartNew()
+Write-Log "[PASO 4] Comparando integridad ORIGEN → DESTINO..." "Yellow"
+
+$sourceMap = @{}
+foreach ($line in $SourceHashes) {
+    $parts = $line -split " = "
+    $sourceMap[$parts[0].Replace($SourceFolder,"")] = $parts[1]
+}
+
+$destMap = @{}
+foreach ($line in $DestHashes) {
+    $parts = $line -split " = "
+    $destMap[$parts[0].Replace($DestinationFolder,"")] = $parts[1]
+}
+
+$allFiles = $sourceMap.Keys
+
+foreach ($file in $allFiles) {
+    if ($destMap.ContainsKey($file)) {
+        if ($sourceMap[$file] -eq $destMap[$file]) {
+            Write-Log "OK: $file → HASH IGUAL" "Green"
+        }
+        else {
+            Write-Log "ERROR: $file → HASH DIFERENTE" "Red"
+        }
+    }
+    else {
+        Write-Log "FALTA EN DESTINO: $file" "Red"
+    }
+}
+
+$sw4.Stop()
+Write-Log ("Tiempo paso 4: {0:N1} segundos" -f $sw4.Elapsed.TotalSeconds)
+Write-Log "-----------------------------------------------"
+
+# ============================
+# RESUMEN FINAL
+# ============================
+$globalStopwatch.Stop()
+
+$srcSize = (Get-ChildItem -Path $SourceFolder -Recurse -File | Measure-Object -Property Length -Sum).Sum
+$dstSize = (Get-ChildItem -Path $DestinationFolder -Recurse -File | Measure-Object -Property Length -Sum).Sum
+
+Write-Log "========== RESUMEN FINAL ==========" "Cyan"
+Write-Log "Carpeta origen: $SourceFolder"
+Write-Log "Carpeta destino: $DestinationFolder"
+Write-Log "Tamaño origen:  $(Format-SizeMB $srcSize)"
+Write-Log "Tamaño destino: $(Format-SizeMB $dstSize)"
+Write-Log ("Tiempo total: {0:N1} segundos" -f $globalStopwatch.Elapsed.TotalSeconds)
+Write-Log "Estado final: COMPLETADO SIN ERRORES"
+Write-Log "==================================" "Cyan"
 
 ```
