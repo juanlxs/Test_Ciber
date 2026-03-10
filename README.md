@@ -2353,6 +2353,60 @@ Start-Menu
 
 ```
 
+```md
+param(
+    [Parameter(Mandatory = $true)]
+    [string]$RutasTXT
+)
+
+# Carpeta donde está el script
+$ScriptFolder = Split-Path -Parent $MyInvocation.MyCommand.Path
+
+# Nombre del log
+$HostName  = $env:COMPUTERNAME
+$TimeStamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
+$LogFile   = Join-Path $ScriptFolder "Reparse_${HostName}_$TimeStamp.log"
+
+Write-Host "Log generado en: $LogFile"
+Write-Host ""
+
+# Función para escribir en log
+function Write-Log {
+    param([string]$Message)
+    Add-Content -Path $LogFile -Value $Message
+}
+
+# Validar TXT
+if (-not (Test-Path $RutasTXT)) {
+    Write-Host "ERROR: No se encuentra el archivo TXT."
+    exit 1
+}
+
+$Rutas = Get-Content -Path $RutasTXT | Where-Object { $_.Trim() -ne "" }
+
+# Procesar cada ruta
+foreach ($Ruta in $Rutas) {
+
+    Write-Host "Consultando: $Ruta"
+    Write-Log  "Consultando: $Ruta"
+
+    # Ejecutar comando
+    $Salida = fsutil reparsepoint query "$Ruta" 2>&1
+
+    # Mostrar por pantalla
+    $Salida | ForEach-Object { Write-Host $_ }
+
+    # Guardar en log
+    $Salida | ForEach-Object { Write-Log $_ }
+
+    Write-Log "------------------------------------------------------------"
+    Write-Host ""
+}
+
+Write-Host "Proceso completado."
+
+```
+
 
 
 
