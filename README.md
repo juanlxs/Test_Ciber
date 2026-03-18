@@ -1,1623 +1,338 @@
 # Test_Ciber
-## CONVERSION
+
+## copia-segura_v4.1.ps1
 ```md
 param(
     [Parameter(Mandatory = $true)]
-    [string]$Path,   # Ruta de la imagen Clonezilla
+    [string]$Path,
 
-    [string]$OutputBaseFolder   = "C:\imagen\conversion",
-    [string]$SevenZipPath       = "C:\Program Files\7-Zip\7z.exe",
-    [string]$QemuImgPath        = "C:\Program Files\qemu\qemu-img.exe",
-    [string]$ClonezillaUtilPath = "C:\ruta\a\clonezilla-util.exe"   # <-- CAMBIA ESTA RUTA
-)
-
-# ============================
-#   RUTAS DE SALIDA
-# ============================
-$ClonezillaFolder = $Path
-$ImgFolder  = Join-Path $OutputBaseFolder "img"
-$VhdxFolder = Join-Path $OutputBaseFolder "vhdx"
-$LogFile    = Join-Path $OutputBaseFolder "conversion.log"
-
-New-Item -ItemType Directory -Path $OutputBaseFolder -Force | Out-Null
-New-Item -ItemType Directory -Path $ImgFolder        -Force | Out-Null
-New-Item -ItemType Directory -Path $VhdxFolder       -Force | Out-Null
-
-# ============================
-#   FUNCIONES DE LOG
-# ============================
-function Write-Log {
-    param([string]$Message, [ConsoleColor]$Color = [ConsoleColor]::Gray)
-    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    $line = "[$timestamp] $Message"
-    $oldColor = $Host.UI.RawUI.ForegroundColor
-    $Host.UI.RawUI.ForegroundColor = $Color
-    Write-Host $line
-    $Host.UI.RawUI.ForegroundColor = $oldColor
-    Add-Content -Path $LogFile -Value $line
-}
-
-function Format-SizeMB {
-    param([long]$Bytes)
-    if ($Bytes -le 0) { return "0 MB" }
-    return ("{0:N0} MB" -f ($Bytes / 1MB))
-}
-
-$globalStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
-
-Write-Log "===== INICIO DEL PROCESO =====" "Cyan"
-Write-Log "Carpeta Clonezilla origen: $ClonezillaFolder"
-Write-Log "Carpeta de salida: $OutputBaseFolder"
-Write-Log "-----------------------------------------------"
-
-# ============================
-# 1. HASH SHA-256 DE LA CARPETA CON 7-ZIP
-# ============================
-$sw1 = [System.Diagnostics.Stopwatch]::StartNew()
-Write-Log "[PASO 1] HASH SHA-256 de la carpeta Clonezilla (7-Zip)..." "Yellow"
-
-$hashCmd = @("h", "-scrcSHA256", "`"$ClonezillaFolder`"")
-
-try {
-    $hashOutput = & "$SevenZipPath" $hashCmd 2>&1
-    $hashOutput | ForEach-Object { Write-Log "7z: $_" }
-}
-catch {
-    Write-Log "ERROR en 7-Zip: $($_.Exception.Message)" "Red"
-}
-
-$sw1.Stop()
-Write-Log ("Tiempo paso 1: {0:N1} segundos" -f $sw1.Elapsed.TotalSeconds)
-Write-Log "-----------------------------------------------"
-
-# ============================
-# 2. CONVERTIR CLONEZILLA → IMG
-# ============================
-$sw2 = [System.Diagnostics.Stopwatch]::StartNew()
-Write-Log "[PASO 2] Conversión Clonezilla → IMG (clonezilla-util.exe)..." "Yellow"
-
-$ImageDirs = Get-ChildItem -Path $ClonezillaFolder -Directory
-
-foreach ($dir in $ImageDirs) {
-    Write-Log "Procesando imagen Clonezilla: $($dir.FullName)"
-
-    $cmd = "`"$ClonezillaUtilPath`" extract-partition-image --input `"$($dir.FullName)`" --output `"$ImgFolder`""
-    Write-Log "Ejecutando: $cmd"
-
-    try {
-        $output = Invoke-Expression $cmd 2>&1
-        $output | ForEach-Object { Write-Log "clonezilla-util: $_" }
-    }
-    catch {
-        Write-Log "ERROR en clonezilla-util: $($_.Exception.Message)" "Red"
-    }
-}
-
-$imgFilesAfter = Get-ChildItem -Path $ImgFolder -File -Filter *.img
-foreach ($img in $imgFilesAfter) {
-    Write-Log "IMG generado: $($img.Name) (Tamaño: $(Format-SizeMB $img.Length))"
-}
-
-$sw2.Stop()
-Write-Log ("Tiempo paso 2: {0:N1} segundos" -f $sw2.Elapsed.TotalSeconds)
-Write-Log "-----------------------------------------------"
-
-# ============================
-# 3. HASHES ORIGINAL → IMG
-# ============================
-$sw3 = [System.Diagnostics.Stopwatch]::StartNew()
-Write-Log "[PASO 3] Hashes SHA-256 y comparación ORIGINAL → IMG..." "Yellow"
-
-$originalPartitionFiles = Get-ChildItem -Path $ClonezillaFolder -Recurse -File |
-                          Where-Object { $_.Name -match "\.img(\.gz|\.gzip|\.lz4)?$" }
-
-foreach ($orig in $originalPartitionFiles) {
-    $baseName = $orig.Name -replace "\.gz|\.gzip|\.lz4",""
-    $imgPath  = Join-Path $ImgFolder $baseName
-
-    $hashOrig = (Get-FileHash -Algorithm SHA256 -Path $orig.FullName).Hash
-    Write-Log "HASH ORIGINAL: $($orig.FullName) = $hashOrig"
-
-    if (Test-Path $imgPath) {
-        $hashImg = (Get-FileHash -Algorithm SHA256 -Path $imgPath).Hash
-        Write-Log "HASH IMG:      $imgPath = $hashImg"
-
-        Write-Log "Integridad ORIGINAL→IMG: HASH DISTINTO (esperable por compresión)" "DarkYellow"
-    }
-    else {
-        Write-Log "AVISO: No se encontró IMG correspondiente para $($orig.FullName)" "DarkYellow"
-    }
-}
-
-$sw3.Stop()
-Write-Log ("Tiempo paso 3: {0:N1} segundos" -f $sw3.Elapsed.TotalSeconds)
-Write-Log "-----------------------------------------------"
-
-# ============================
-# 4. CONVERTIR IMG → VHDX
-# ============================
-$sw4 = [System.Diagnostics.Stopwatch]::StartNew()
-Write-Log "[PASO 4] Conversión IMG → VHDX (qemu-img)..." "Yellow"
-
-$imgFiles = Get-ChildItem -Path $ImgFolder -File -Filter *.img
-
-foreach ($img in $imgFiles) {
-    $vhdxName = ($img.BaseName + ".vhdx")
-    $vhdxPath = Join-Path $VhdxFolder $vhdxName
-
-    Write-Log "Convirtiendo: $($img.FullName) → $vhdxPath"
-
-    try {
-        & "$QemuImgPath" convert -f raw -O vhdx "`"$($img.FullName)`"" "`"$vhdxPath`"" 2>&1 |
-            ForEach-Object { Write-Log "QEMU: $_" }
-    }
-    catch {
-        Write-Log "ERROR en qemu-img: $($_.Exception.Message)" "Red"
-    }
-
-    if (Test-Path $vhdxPath) {
-        Write-Log "VHDX generado: $vhdxPath (Tamaño: $(Format-SizeMB ((Get-Item $vhdxPath).Length)))"
-    }
-}
-
-$sw4.Stop()
-Write-Log ("Tiempo paso 4: {0:N1} segundos" -f $sw4.Elapsed.TotalSeconds)
-Write-Log "-----------------------------------------------"
-
-# ============================
-# 5. HASHES DE LOS VHDX
-# ============================
-$sw5 = [System.Diagnostics.Stopwatch]::StartNew()
-Write-Log "[PASO 5] Hashes SHA-256 de los VHDX..." "Yellow"
-
-$vhdxFiles = Get-ChildItem -Path $VhdxFolder -File -Filter *.vhdx
-foreach ($vhdx in $vhdxFiles) {
-    $hashVhdx = (Get-FileHash -Algorithm SHA256 -Path $vhdx.FullName).Hash
-    Write-Log "HASH VHDX: $($vhdx.FullName) = $hashVhdx"
-}
-
-$sw5.Stop()
-Write-Log ("Tiempo paso 5: {0:N1} segundos" -f $sw5.Elapsed.TotalSeconds)
-Write-Log "-----------------------------------------------"
-
-# ============================
-# RESUMEN FINAL
-# ============================
-$globalStopwatch.Stop()
-
-$partCount   = $imgFiles.Count
-$totalImgMB  = ($imgFiles | Measure-Object -Property Length -Sum).Sum
-$totalVhdxMB = ($vhdxFiles | Measure-Object -Property Length -Sum).Sum
-
-Write-Log "========== RESUMEN FINAL ==========" "Cyan"
-Write-Log "Particiones procesadas: $partCount"
-Write-Log "Tamaño total IMG:  $(Format-SizeMB $totalImgMB)"
-Write-Log "Tamaño total VHDX: $(Format-SizeMB $totalVhdxMB)"
-Write-Log ("Tiempo total: {0:N1} segundos" -f $globalStopwatch.Elapsed.TotalSeconds)
-Write-Log "Estado final: COMPLETADO (revisar avisos/errores si los hay)"
-Write-Log "==================================" "Cyan"
-
-```
-## CONVERSION CON BARRAS DE PROGRESO
-
-```md
-param(
     [Parameter(Mandatory = $true)]
-    [string]$Path,   # Ruta de la imagen Clonezilla
+    [string]$DestinationName,
 
-    [string]$OutputBaseFolder   = "C:\imagen\conversion",
-    [string]$SevenZipPath       = "C:\Program Files\7-Zip\7z.exe",
-    [string]$QemuImgPath        = "C:\Program Files\qemu\qemu-img.exe",
-    [string]$ClonezillaUtilPath = "C:\ruta\a\clonezilla-util.exe"
-)
-
-# ============================
-#   RUTAS DE SALIDA
-# ============================
-$ClonezillaFolder = $Path
-$ImgFolder  = Join-Path $OutputBaseFolder "img"
-$VhdxFolder = Join-Path $OutputBaseFolder "vhdx"
-$LogFile    = Join-Path $OutputBaseFolder "conversion.log"
-
-New-Item -ItemType Directory -Path $OutputBaseFolder -Force | Out-Null
-New-Item -ItemType Directory -Path $ImgFolder        -Force | Out-Null
-New-Item -ItemType Directory -Path $VhdxFolder       -Force | Out-Null
-
-# ============================
-#   LOGGING
-# ============================
-function Write-Log {
-    param([string]$Message, [ConsoleColor]$Color = [ConsoleColor]::Gray)
-    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    $line = "[$timestamp] $Message"
-    $oldColor = $Host.UI.RawUI.ForegroundColor
-    $Host.UI.RawUI.ForegroundColor = $Color
-    Write-Host $line
-    $Host.UI.RawUI.ForegroundColor = $oldColor
-    Add-Content -Path $LogFile -Value $line
-}
-
-function Format-SizeMB {
-    param([long]$Bytes)
-    if ($Bytes -le 0) { return "0 MB" }
-    return ("{0:N0} MB" -f ($Bytes / 1MB))
-}
-
-$globalStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
-
-Write-Log "===== INICIO DEL PROCESO =====" "Cyan"
-Write-Log "Carpeta Clonezilla origen: $ClonezillaFolder"
-Write-Log "Carpeta de salida: $OutputBaseFolder"
-Write-Log "-----------------------------------------------"
-
-# ============================
-# 1. HASH SHA-256 DE LA CARPETA CON 7-ZIP
-# ============================
-$sw1 = [System.Diagnostics.Stopwatch]::StartNew()
-Write-Log "[PASO 1] HASH SHA-256 de la carpeta Clonezilla (7-Zip)..." "Yellow"
-
-Write-Progress -Activity "Paso 1/5 - Hash SHA-256 (7-Zip)" -Status "Ejecutando 7-Zip..." -PercentComplete 10
-
-try {
-    $hashOutput = & "$SevenZipPath" h -scrcSHA256 "`"$ClonezillaFolder`"" 2>&1
-    $hashOutput | ForEach-Object { Write-Log "7z: $_" }
-}
-catch {
-    Write-Log "ERROR en 7-Zip: $($_.Exception.Message)" "Red"
-}
-
-Write-Progress -Activity "Paso 1/5 - Hash SHA-256 (7-Zip)" -Completed
-
-$sw1.Stop()
-Write-Log ("Tiempo paso 1: {0:N1} segundos" -f $sw1.Elapsed.TotalSeconds)
-Write-Log "-----------------------------------------------"
-
-# ============================
-# 2. CONVERTIR CLONEZILLA → IMG (CON PROGRESO)
-# ============================
-$sw2 = [System.Diagnostics.Stopwatch]::StartNew()
-Write-Log "[PASO 2] Conversión Clonezilla → IMG (clonezilla-util.exe)..." "Yellow"
-
-$ImageDirs = Get-ChildItem -Path $ClonezillaFolder -Directory
-$totalDirs = $ImageDirs.Count
-$processedDirs = 0
-
-foreach ($dir in $ImageDirs) {
-    $processedDirs++
-    $percent = [math]::Min(100, ($processedDirs / [math]::Max(1,$totalDirs)) * 100)
-
-    Write-Progress `
-        -Activity "Paso 2/5 - Clonezilla → IMG" `
-        -Status "Procesando imagen: $($dir.Name)" `
-        -PercentComplete $percent
-
-    Write-Log "Procesando imagen Clonezilla: $($dir.FullName)"
-
-    $cmd = "`"$ClonezillaUtilPath`" extract-partition-image --input `"$($dir.FullName)`" --output `"$ImgFolder`""
-    Write-Log "Ejecutando: $cmd"
-
-    try {
-        $output = Invoke-Expression $cmd 2>&1
-        $output | ForEach-Object { Write-Log "clonezilla-util: $_" }
-    }
-    catch {
-        Write-Log "ERROR en clonezilla-util: $($_.Exception.Message)" "Red"
-    }
-}
-
-Write-Progress -Activity "Paso 2/5 - Clonezilla → IMG" -Completed
-
-$imgFilesAfter = Get-ChildItem -Path $ImgFolder -File -Filter *.img
-foreach ($img in $imgFilesAfter) {
-    Write-Log "IMG generado: $($img.Name) (Tamaño: $(Format-SizeMB $img.Length))"
-}
-
-$sw2.Stop()
-Write-Log ("Tiempo paso 2: {0:N1} segundos" -f $sw2.Elapsed.TotalSeconds)
-Write-Log "-----------------------------------------------"
-
-# ============================
-# 3. HASHES ORIGINAL → IMG (CON PROGRESO)
-# ============================
-$sw3 = [System.Diagnostics.Stopwatch]::StartNew()
-Write-Log "[PASO 3] Hashes SHA-256 y comparación ORIGINAL → IMG..." "Yellow"
-
-$originalPartitionFiles = Get-ChildItem -Path $ClonezillaFolder -Recurse -File |
-                          Where-Object { $_.Name -match "\.img(\.gz|\.gzip|\.lz4)?$" }
-
-$totalOrig = $originalPartitionFiles.Count
-$processedOrig = 0
-
-foreach ($orig in $originalPartitionFiles) {
-    $processedOrig++
-    $percent = [math]::Min(100, ($processedOrig / [math]::Max(1,$totalOrig)) * 100)
-
-    Write-Progress `
-        -Activity "Paso 3/5 - Comparando ORIGINAL → IMG" `
-        -Status "Archivo: $($orig.Name)" `
-        -PercentComplete $percent
-
-    $baseName = $orig.Name -replace "\.gz|\.gzip|\.lz4",""
-    $imgPath  = Join-Path $ImgFolder $baseName
-
-    $hashOrig = (Get-FileHash -Algorithm SHA256 -Path $orig.FullName).Hash
-    Write-Log "HASH ORIGINAL: $($orig.FullName) = $hashOrig"
-
-    if (Test-Path $imgPath) {
-        $hashImg = (Get-FileHash -Algorithm SHA256 -Path $imgPath).Hash
-        Write-Log "HASH IMG:      $imgPath = $hashImg"
-        Write-Log "Integridad ORIGINAL→IMG: HASH DISTINTO (esperable por compresión)" "DarkYellow"
-    }
-    else {
-        Write-Log "AVISO: No se encontró IMG correspondiente para $($orig.FullName)" "DarkYellow"
-    }
-}
-
-Write-Progress -Activity "Paso 3/5 - Comparando ORIGINAL → IMG" -Completed
-
-$sw3.Stop()
-Write-Log ("Tiempo paso 3: {0:N1} segundos" -f $sw3.Elapsed.TotalSeconds)
-Write-Log "-----------------------------------------------"
-
-# ============================
-# 4. CONVERTIR IMG → VHDX (CON PROGRESO)
-# ============================
-$sw4 = [System.Diagnostics.Stopwatch]::StartNew()
-Write-Log "[PASO 4] Conversión IMG → VHDX (qemu-img)..." "Yellow"
-
-$imgFiles = Get-ChildItem -Path $ImgFolder -File -Filter *.img
-$totalImg = $imgFiles.Count
-$processedImg = 0
-
-foreach ($img in $imgFiles) {
-    $processedImg++
-    $percent = [math]::Min(100, ($processedImg / [math]::Max(1,$totalImg)) * 100)
-
-    Write-Progress `
-        -Activity "Paso 4/5 - IMG → VHDX" `
-        -Status "Convirtiendo: $($img.Name)" `
-        -PercentComplete $percent
-
-    $vhdxName = ($img.BaseName + ".vhdx")
-    $vhdxPath = Join-Path $VhdxFolder $vhdxName
-
-    Write-Log "Convirtiendo: $($img.FullName) → $vhdxPath"
-
-    try {
-        & "$QemuImgPath" convert -f raw -O vhdx "`"$($img.FullName)`"" "`"$vhdxPath`"" 2>&1 |
-            ForEach-Object { Write-Log "QEMU: $_" }
-    }
-    catch {
-        Write-Log "ERROR en qemu-img: $($_.Exception.Message)" "Red"
-    }
-
-    if (Test-Path $vhdxPath) {
-        Write-Log "VHDX generado: $vhdxPath (Tamaño: $(Format-SizeMB ((Get-Item $vhdxPath).Length)))"
-    }
-}
-
-Write-Progress -Activity "Paso 4/5 - IMG → VHDX" -Completed
-
-$sw4.Stop()
-Write-Log ("Tiempo paso 4: {0:N1} segundos" -f $sw4.Elapsed.TotalSeconds)
-Write-Log "-----------------------------------------------"
-
-# ============================
-# 5. HASHES DE LOS VHDX (CON PROGRESO)
-# ============================
-$sw5 = [System.Diagnostics.Stopwatch]::StartNew()
-Write-Log "[PASO 5] Hashes SHA-256 de los VHDX..." "Yellow"
-
-$vhdxFiles = Get-ChildItem -Path $VhdxFolder -File -Filter *.vhdx
-$totalVhdx = $vhdxFiles.Count
-$processedVhdx = 0
-
-foreach ($vhdx in $vhdxFiles) {
-    $processedVhdx++
-    $percent = [math]::Min(100, ($processedVhdx / [math]::Max(1,$totalVhdx)) * 100)
-
-    Write-Progress `
-        -Activity "Paso 5/5 - Hashes VHDX" `
-        -Status "Archivo: $($vhdx.Name)" `
-        -PercentComplete $percent
-
-    $hashVhdx = (Get-FileHash -Algorithm SHA256 -Path $vhdx.FullName).Hash
-    Write-Log "HASH VHDX: $($vhdx.FullName) = $hashVhdx"
-}
-
-Write-Progress -Activity "Paso 5/5 - Hashes VHDX" -Completed
-
-$sw5.Stop()
-Write-Log ("Tiempo paso 5: {0:N1} segundos" -f $sw5.Elapsed.TotalSeconds)
-Write-Log "-----------------------------------------------"
-
-# ============================
-# RESUMEN FINAL
-# ============================
-$globalStopwatch.Stop()
-
-$partCount   = $imgFiles.Count
-$totalImgMB  = ($imgFiles | Measure-Object -Property Length -Sum).Sum
-$totalVhdxMB = ($vhdxFiles | Measure-Object -Property Length -Sum).Sum
-
-Write-Log "========== RESUMEN FINAL ==========" "Cyan"
-Write-Log "Particiones procesadas: $partCount"
-Write-Log "Tamaño total IMG:  $(Format-SizeMB $totalImgMB)"
-Write-Log "Tamaño total VHDX: $(Format-SizeMB $totalVhdxMB)"
-Write-Log ("Tiempo total: {0:N1} segundos" -f $globalStopwatch.Elapsed.TotalSeconds)
-Write-Log "Estado final: COMPLETADO (revisar avisos/errores si los hay)"
-Write-Log "==================================" "Cyan"
-
-```
-
-## CONVERSION CON ESTILO COROPORATIVO
-
-```md
-param(
-    [Parameter(Mandatory = $true)]
-    [string]$Path,   # Ruta de la imagen Clonezilla
-
-    [string]$OutputBaseFolder   = "C:\imagen\conversion",
-    [string]$SevenZipPath       = "C:\Program Files\7-Zip\7z.exe",
-    [string]$QemuImgPath        = "C:\Program Files\qemu\qemu-img.exe",
-    [string]$ClonezillaUtilPath = "C:\ruta\a\clonezilla-util.exe"
+    [Parameter(Mandatory = $false)]
+    [string]$SevenZipPath = "C:\Program Files\7-Zip\7z.exe"
 )
 
 Clear-Host
-Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
-Write-Host "                 ENTERPRISE CONVERSION SUITE           " -ForegroundColor Yellow
-Write-Host "                     Clonezilla → VHDX                 " -ForegroundColor Yellow
-Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
+Write-Host "  ███████╗██╗  ██╗███████╗███████╗██████╗ ██████╗ ██╗██████╗  " -ForegroundColor Yellow
+Write-Host "  ██╔════╝██║  ██║██╔════╝██╔════╝██╔══██╗██╔══██╗██║██╔══██╗ " -ForegroundColor Yellow
+Write-Host "  ███████╗███████║█████╗  █████╗  ██████╔╝██║  ██║██║██████╔╝ " -ForegroundColor Yellow
+Write-Host "  ╚════██║██╔══██║██╔══╝  ██╔══╝  ██╔═══╝ ██║  ██║██║██╔═══╝  " -ForegroundColor Yellow
+Write-Host "  ███████║██║  ██║███████╗███████╗██║     ██████╔╝██║██║      " -ForegroundColor Yellow
+Write-Host "  ╚══════╝╚═╝  ╚═╝╚══════╝╚══════╝╚═╝     ╚═════╝ ╚═╝╚═╝      " -ForegroundColor Yellow
+Write-Host "══════════════════════════════════════════════════════════════" -ForegroundColor Yellow
+Write-Host "              COPIA SEGURA v4.1 · SHEEPDIP SUITE              " -ForegroundColor Yellow
+Write-Host "══════════════════════════════════════════════════════════════" -ForegroundColor Yellow
 Write-Host ""
 
-# ============================
-#   RUTAS DE SALIDA
-# ============================
-$ClonezillaFolder = $Path
-$ImgFolder  = Join-Path $OutputBaseFolder "img"
-$VhdxFolder = Join-Path $OutputBaseFolder "vhdx"
-$LogFile    = Join-Path $OutputBaseFolder "conversion.log"
+#INICIADOR DE MEDICIÓN DE TIEMPO
+$startTime = Get-Date
 
-New-Item -ItemType Directory -Path $OutputBaseFolder -Force | Out-Null
-New-Item -ItemType Directory -Path $ImgFolder        -Force | Out-Null
-New-Item -ItemType Directory -Path $VhdxFolder       -Force | Out-Null
+# OPTIMIZACION DEL PROCESO
+Write-Host "Ajustando prioridad del proceso..." -ForegroundColor DarkGray
+(Get-Process -Id $PID).PriorityClass = "High"
 
-# ============================
-#   LOGGING
-# ============================
-function Write-Log {
-    param([string]$Message, [ConsoleColor]$Color = [ConsoleColor]::Gray)
-    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    $line = "[$timestamp] $Message"
-    $oldColor = $Host.UI.RawUI.ForegroundColor
-    $Host.UI.RawUI.ForegroundColor = $Color
-    Write-Host $line
-    $Host.UI.RawUI.ForegroundColor = $oldColor
-    Add-Content -Path $LogFile -Value $line
-}
-
-function Format-SizeMB {
-    param([long]$Bytes)
-    if ($Bytes -le 0) { return "0 MB" }
-    return ("{0:N0} MB" -f ($Bytes / 1MB))
-}
-
-$globalStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
-
-Write-Log "===== INICIO DEL PROCESO =====" "Cyan"
-Write-Log "Carpeta Clonezilla origen: $ClonezillaFolder"
-Write-Log "Carpeta de salida: $OutputBaseFolder"
-Write-Log "-----------------------------------------------"
-
-# =====================================================
-# 1. HASH SHA-256 DE LA CARPETA CON 7-ZIP
-# =====================================================
-Write-Host ""
-Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
-Write-Host "                 PASO 1 — HASH SHA‑256                 " -ForegroundColor Yellow
-Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
-
-$sw1 = [System.Diagnostics.Stopwatch]::StartNew()
-Write-Log "[PASO 1] HASH SHA-256 de la carpeta Clonezilla (7-Zip)..." "Yellow"
-
-Write-Progress -Activity "Paso 1/5 - Hash SHA-256 (7-Zip)" -Status "Ejecutando 7-Zip..." -PercentComplete 10
-
-try {
-    $hashOutput = & "$SevenZipPath" h -scrcSHA256 "`"$ClonezillaFolder`"" 2>&1
-    $hashOutput | ForEach-Object { Write-Log "7z: $_" }
-}
-catch {
-    Write-Log "ERROR en 7-Zip: $($_.Exception.Message)" "Red"
-}
-
-Write-Progress -Activity "Paso 1/5 - Hash SHA-256 (7-Zip)" -Completed
-
-$sw1.Stop()
-Write-Log ("Tiempo paso 1: {0:N1} segundos" -f $sw1.Elapsed.TotalSeconds)
-Write-Log "-----------------------------------------------"
-
-# =====================================================
-# 2. CONVERTIR CLONEZILLA → IMG
-# =====================================================
-Write-Host ""
-Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
-Write-Host "           PASO 2 — Clonezilla → IMG (RAW)             " -ForegroundColor Yellow
-Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
-
-$sw2 = [System.Diagnostics.Stopwatch]::StartNew()
-Write-Log "[PASO 2] Conversión Clonezilla → IMG..." "Yellow"
-
-$ImageDirs = Get-ChildItem -Path $ClonezillaFolder -Directory
-$totalDirs = $ImageDirs.Count
-$processedDirs = 0
-
-foreach ($dir in $ImageDirs) {
-    $processedDirs++
-    $percent = ($processedDirs / $totalDirs) * 100
-
-    Write-Progress -Activity "Paso 2/5 - Clonezilla → IMG" -Status "Procesando: $($dir.Name)" -PercentComplete $percent
-
-    Write-Log "Procesando imagen Clonezilla: $($dir.FullName)"
-
-    $cmd = "`"$ClonezillaUtilPath`" extract-partition-image --input `"$($dir.FullName)`" --output `"$ImgFolder`""
-    Write-Log "Ejecutando: $cmd"
-
-    try {
-        $output = Invoke-Expression $cmd 2>&1
-        $output | ForEach-Object { Write-Log "clonezilla-util: $_" }
-    }
-    catch {
-        Write-Log "ERROR en clonezilla-util: $($_.Exception.Message)" "Red"
-    }
-}
-
-Write-Progress -Activity "Paso 2/5 - Clonezilla → IMG" -Completed
-
-$imgFilesAfter = Get-ChildItem -Path $ImgFolder -File -Filter *.img
-foreach ($img in $imgFilesAfter) {
-    Write-Log "IMG generado: $($img.Name) (Tamaño: $(Format-SizeMB $img.Length))"
-}
-
-$sw2.Stop()
-Write-Log ("Tiempo paso 2: {0:N1} segundos" -f $sw2.Elapsed.TotalSeconds)
-Write-Log "-----------------------------------------------"
-
-# =====================================================
-# 3. HASHES ORIGINAL → IMG
-# =====================================================
-Write-Host ""
-Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
-Write-Host "         PASO 3 — Comparación ORIGINAL → IMG           " -ForegroundColor Yellow
-Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
-
-$sw3 = [System.Diagnostics.Stopwatch]::StartNew()
-Write-Log "[PASO 3] Comparación de hashes ORIGINAL → IMG..." "Yellow"
-
-$originalPartitionFiles = Get-ChildItem -Path $ClonezillaFolder -Recurse -File |
-                          Where-Object { $_.Name -match "\.img(\.gz|\.gzip|\.lz4)?$" }
-
-$totalOrig = $originalPartitionFiles.Count
-$processedOrig = 0
-
-foreach ($orig in $originalPartitionFiles) {
-    $processedOrig++
-    $percent = ($processedOrig / $totalOrig) * 100
-
-    Write-Progress -Activity "Paso 3/5 - Comparando ORIGINAL → IMG" -Status "Archivo: $($orig.Name)" -PercentComplete $percent
-
-    $baseName = $orig.Name -replace "\.gz|\.gzip|\.lz4",""
-    $imgPath  = Join-Path $ImgFolder $baseName
-
-    $hashOrig = (Get-FileHash -Algorithm SHA256 -Path $orig.FullName).Hash
-    Write-Log "HASH ORIGINAL: $($orig.FullName) = $hashOrig"
-
-    if (Test-Path $imgPath) {
-        $hashImg = (Get-FileHash -Algorithm SHA256 -Path $imgPath).Hash
-        Write-Log "HASH IMG:      $imgPath = $hashImg"
-        Write-Log "Integridad ORIGINAL→IMG: HASH DISTINTO (esperable por compresión)" "DarkYellow"
-    }
-    else {
-        Write-Log "AVISO: No se encontró IMG correspondiente para $($orig.FullName)" "DarkYellow"
-    }
-}
-
-Write-Progress -Activity "Paso 3/5 - Comparando ORIGINAL → IMG" -Completed
-
-$sw3.Stop()
-Write-Log ("Tiempo paso 3: {0:N1} segundos" -f $sw3.Elapsed.TotalSeconds)
-Write-Log "-----------------------------------------------"
-
-# =====================================================
-# 4. CONVERTIR IMG → VHDX
-# =====================================================
-Write-Host ""
-Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
-Write-Host "               PASO 4 — IMG → VHDX (QEMU)              " -ForegroundColor Yellow
-Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
-
-$sw4 = [System.Diagnostics.Stopwatch]::StartNew()
-Write-Log "[PASO 4] Conversión IMG → VHDX..." "Yellow"
-
-$imgFiles = Get-ChildItem -Path $ImgFolder -File -Filter *.img
-$totalImg = $imgFiles.Count
-$processedImg = 0
-
-foreach ($img in $imgFiles) {
-    $processedImg++
-    $percent = ($processedImg / $totalImg) * 100
-
-    Write-Progress -Activity "Paso 4/5 - IMG → VHDX" -Status "Convirtiendo: $($img.Name)" -PercentComplete $percent
-
-    $vhdxName = ($img.BaseName + ".vhdx")
-    $vhdxPath = Join-Path $VhdxFolder $vhdxName
-
-    Write-Log "Convirtiendo: $($img.FullName) → $vhdxPath"
-
-    try {
-        & "$QemuImgPath" convert -f raw -O vhdx "`"$($img.FullName)`"" "`"$vhdxPath`"" 2>&1 |
-            ForEach-Object { Write-Log "QEMU: $_" }
-    }
-    catch {
-        Write-Log "ERROR en qemu-img: $($_.Exception.Message)" "Red"
-    }
-
-    if (Test-Path $vhdxPath) {
-        Write-Log "VHDX generado: $vhdxPath (Tamaño: $(Format-SizeMB ((Get-Item $vhdxPath).Length)))"
-    }
-}
-
-Write-Progress -Activity "Paso 4/5 - IMG → VHDX" -Completed
-
-$sw4.Stop()
-Write-Log ("Tiempo paso 4: {0:N1} segundos" -f $sw4.Elapsed.TotalSeconds)
-Write-Log "-----------------------------------------------"
-
-# =====================================================
-# 5. HASHES DE LOS VHDX
-# =====================================================
-Write-Host ""
-Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
-Write-Host "             PASO 5 — Hashes SHA‑256 VHDX              " -ForegroundColor Yellow
-Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
-
-$sw5 = [System.Diagnostics.Stopwatch]::StartNew()
-Write-Log "[PASO 5] Hashes SHA-256 de los VHDX..." "Yellow"
-
-$vhdxFiles = Get-ChildItem -Path $VhdxFolder -File -Filter *.vhdx
-$totalVhdx = $vhdxFiles.Count
-$processedVhdx = 0
-
-foreach ($vhdx in $vhdxFiles) {
-    $processedVhdx++
-    $percent = ($processedVhdx / $totalVhdx) * 100
-
-    Write-Progress -Activity "Paso 5/5 - Hashes VHDX" -Status "Archivo: $($vhdx.Name)" -PercentComplete $percent
-
-    $hashVhdx = (Get-FileHash -Algorithm SHA256 -Path $vhdx.FullName).Hash
-    Write-Log "HASH VHDX: $($vhdx.FullName) = $hashVhdx"
-}
-
-Write-Progress -Activity "Paso 5/5 - Hashes VHDX" -Completed
-
-$sw5.Stop()
-Write-Log ("Tiempo paso 5: {0:N1} segundos" -f $sw5.Elapsed.TotalSeconds)
-Write-Log "-----------------------------------------------"
-
-# =====================================================
-# RESUMEN FINAL
-# =====================================================
-Write-Host ""
-Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
-Write-Host "                     RESUMEN FINAL                     " -ForegroundColor Yellow
-Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
-
-$globalStopwatch.Stop()
-
-$partCount   = $imgFiles.Count
-$totalImgMB  = ($imgFiles | Measure-Object -Property Length -Sum).Sum
-$totalVhdxMB = ($vhdxFiles | Measure-Object -Property Length -Sum).Sum
-
-Write-Log "========== RESUMEN FINAL ==========" "Cyan"
-Write-Log "Particiones procesadas: $partCount"
-Write-Log "Tamaño total IMG:  $(Format-SizeMB $totalImgMB)"
-Write-Log "Tamaño total VHDX: $(Format-SizeMB $totalVhdxMB)"
-Write-Log ("Tiempo total: {0:N1} segundos" -f $globalStopwatch.Elapsed.TotalSeconds)
-Write-Log "Estado final: COMPLETADO"
-Write-Log "==================================" "Cyan"
-
-Write-Host "Particiones procesadas: $partCount"
-Write-Host "Tamaño total IMG:  $(Format-SizeMB $totalImgMB)"
-Write-Host "Tamaño total VHDX: $(Format-SizeMB $totalVhdxMB)"
-Write-Host ("Tiempo total: {0:N1} segundos" -f $globalStopwatch.Elapsed.TotalSeconds)
-Write-Host "Estado final: COMPLETADO" -ForegroundColor Green
-
-Write-Host ""
-Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
-
-```
-
-## COPIA SEGURA
-
-```md
-param(
-    [Parameter(Mandatory = $true)]
-    [string]$Path,   # Carpeta origen
-
-    [Parameter(Mandatory = $true)]
-    [string]$DestinationName  # Ruta COMPLETA de destino
-)
-
-# ============================
-#   PREPARAR RUTAS
-# ============================
-$SourceFolder      = $Path
+# PREPARAR RUTAS
+$SourceFolder = $Path
 $DestinationFolder = $DestinationName
 
-# Crear carpeta destino si no existe
 New-Item -ItemType Directory -Path $DestinationFolder -Force | Out-Null
 
-# Timestamp profesional (formato original)
 $TimeStamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
 
-# Carpeta superior al destino
 $ParentFolder = Split-Path $DestinationFolder -Parent
-
-# Carpeta Logs en la capa superior
-$LogsFolder = Join-Path $ParentFolder "Logs"
+$LogsFolder = Join-Path $ParentFolder "logs"
 New-Item -ItemType Directory -Path $LogsFolder -Force | Out-Null
 
-# Logs con nombres cortos + timestamp
-$LogFile       = Join-Path $LogsFolder "BackupLog_$TimeStamp.log"
-$DetailedLog   = Join-Path $LogsFolder "Integrity_$TimeStamp.log"
-$RoboCopyLog   = Join-Path $LogsFolder "Robocopy_$TimeStamp.log"
+# LOG ÚNICO
+$LogUnified = Join-Path $LogsFolder "copia_segura_$TimeStamp.log"
 
-# ============================
-#   FUNCIONES
-# ============================
+# LOGGING
 function Write-Log {
-    param([string]$Message, [ConsoleColor]$Color = [ConsoleColor]::Gray)
+    param(
+        [string]$Message,
+        [string]$Tag = "INFO",
+        [ConsoleColor]$Color = "Gray"
+    )
     $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    $line = "[$timestamp] $Message"
-    $oldColor = $Host.UI.RawUI.ForegroundColor
-    $Host.UI.RawUI.ForegroundColor = $Color
-    Write-Host $line
-    $Host.UI.RawUI.ForegroundColor = $oldColor
-    Add-Content -Path $LogFile -Value $line
+    $line = "[$timestamp] [$Tag] $Message"
+    Write-Host $line -ForegroundColor $Color
+    Add-Content -Path $LogUnified -Value $line
 }
 
-function Format-SizeMB {
-    param([long]$Bytes)
-    if ($Bytes -le 0) { return "0 MB" }
-    return ("{0:N0} MB" -f ($Bytes / 1MB))
-}
+function Write-ColoredLine {
+    param(
+        [string]$Prefix,
+        [string]$Text,
+        [ConsoleColor]$Color = "Cyan"
+    )
 
-function Get-FolderHash {
-    param([string]$Folder)
+    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
 
-    $files = Get-ChildItem -Path $Folder -Recurse -File
-    $hashList = @()
-
-    foreach ($file in $files) {
-        $hash = Get-FileHash -Algorithm SHA256 -Path $file.FullName
-        $hashList += "$($hash.Path) = $($hash.Hash)"
+    if ([string]::IsNullOrWhiteSpace($Text)) {
+        $line = "[$timestamp] [$Prefix]"
+    }
+    else {
+        $line = "[$timestamp] [$Prefix] $Text"
     }
 
-    return $hashList
+    Write-Host $line -ForegroundColor $Color
+    Add-Content -Path $LogUnified -Value $line
 }
 
-function Get-DiskInfoFromPath {
-    param([string]$FolderPath)
+# INFORMACIÓN PROFESIONAL DE DISCO
+function Get-DiskInfoBlock {
+    param(
+        [string]$Path,
+        [string]$DiskTag
+    )
 
-    $driveLetter = $FolderPath.Substring(0,1)
-    $disk = Get-CimInstance Win32_LogicalDisk | Where-Object { $_.DeviceID -eq "$driveLetter`:" }
+    $driveLetter = ($Path.Substring(0, 1)).ToUpper()
 
-    $physical = Get-CimInstance Win32_DiskDrive |
-        Where-Object { $_.DeviceID -like "*$driveLetter*" }
+    # Obtener volumen
+    $vol = Get-Volume -DriveLetter $driveLetter -ErrorAction SilentlyContinue
+    $psd = Get-PSDrive -Name $driveLetter -ErrorAction SilentlyContinue
+
+    # Obtener partición asociada
+    $partition = Get-Partition -DriveLetter $driveLetter -ErrorAction SilentlyContinue
+
+    # Obtener disco físico real
+    $disk = Get-Disk -Number $partition.DiskNumber -ErrorAction SilentlyContinue
+
+    # Obtener información avanzada WMI
+    $wmiDisk = Get-CimInstance Win32_DiskDrive | Where-Object {
+        $_.Index -eq $partition.DiskNumber
+    }
+
+    # Fallbacks
+    $model = $wmiDisk.Model
+    if ([string]::IsNullOrWhiteSpace($model)) { $model = "No disponible" }
+
+    $serial = $wmiDisk.SerialNumber
+    if ([string]::IsNullOrWhiteSpace($serial)) { $serial = "No disponible" }
+
+    $manufacturer = $wmiDisk.Manufacturer
+    if ([string]::IsNullOrWhiteSpace($manufacturer)) { $manufacturer = "No disponible" }
+
+    $interface = $wmiDisk.InterfaceType
+    if ([string]::IsNullOrWhiteSpace($interface)) { $interface = "No disponible" }
+
+    $mediaType = $wmiDisk.MediaType
+    if ([string]::IsNullOrWhiteSpace($mediaType)) { $mediaType = "No disponible" }
+
+    # Espacio
+    $totalGB = [math]::Round(($psd.Used + $psd.Free) / 1GB, 2)
+    $usedGB = [math]::Round($psd.Used / 1GB, 2)
+    $freeGB = [math]::Round($psd.Free / 1GB, 2)
+    $pctFree = [math]::Round(($psd.Free / ($psd.Used + $psd.Free)) * 100, 2)
+
+    # Salida profesional
+    Write-ColoredLine -Prefix $DiskTag -Text "=== INFORMACIÓN DEL DISCO (${driveLetter}:) ===" "Yellow"
+    Write-ColoredLine -Prefix $DiskTag -Text "Ruta: $Path" "Gray"
+    Write-ColoredLine -Prefix $DiskTag -Text "Modelo: $model" "Gray"
+    Write-ColoredLine -Prefix $DiskTag -Text "Número de serie: $serial" "Gray"
+    Write-ColoredLine -Prefix $DiskTag -Text "Fabricante: $manufacturer" "Gray"
+    Write-ColoredLine -Prefix $DiskTag -Text "Tipo de medio: $mediaType" "Gray"
+    Write-ColoredLine -Prefix $DiskTag -Text "Interfaz: $interface" "Gray"
+    Write-ColoredLine -Prefix $DiskTag -Text "Sistema de archivos: $($vol.FileSystem)" "Gray"
+    Write-ColoredLine -Prefix $DiskTag -Text "Etiqueta del volumen: $($vol.FileSystemLabel)" "Gray"
+    Write-ColoredLine -Prefix $DiskTag -Text "Tamaño total: $totalGB GB" "Gray"
+    Write-ColoredLine -Prefix $DiskTag -Text "Usado: $usedGB GB" "Gray"
+    Write-ColoredLine -Prefix $DiskTag -Text "Libre: $freeGB GB" "Gray"
+    Write-ColoredLine -Prefix $DiskTag -Text "Porcentaje libre: $pctFree%" "Gray"
+}
+
+# PROGRESO GLOBAL
+function Show-GlobalProgress {
+    param(
+        [int]$Step,
+        [int]$TotalSteps,
+        [string]$Activity
+    )
+    $percent = [math]::Round(($Step / $TotalSteps) * 100)
+    Write-Progress -Activity $Activity -Status "$percent% completado" -PercentComplete $percent
+}
+
+# HASH 7-ZIP
+function Get-7ZipHash {
+    param([string]$Folder, [string]$Label)
+
+    Write-Log "Calculando hashes: $Label" "INFO" "Yellow"
+
+    $output = & "$SevenZipPath" h -scrcSHA256 -r "$Folder" 2>&1
+
+    $output | ForEach-Object {
+        Write-ColoredLine -Prefix "7z" -Text $_ "Blue"
+    }
+
+    return $output
+}
+
+# ROBOCOPY
+function Invoke-Robocopy {
+    param([string]$Source, [string]$Destination)
+
+    Write-Log "Ejecutando ROBOCOPY..." "INFO" "Yellow"
+
+    $cmd = "robocopy `"$Source`" `"$Destination`" /MIR /MT:32 /R:1 /W:1 /NP /TEE"
+    Write-ColoredLine -Prefix "CMD" -Text $cmd "Blue"
+
+    Write-ColoredLine -Prefix "robocopy" -Text "" "Blue"
+
+    cmd.exe /c $cmd | ForEach-Object {
+        Write-ColoredLine -Prefix "robocopy" -Text $_ "Blue"
+    }
+}
+
+# COMPARACION DE INTEGRIDAD
+function Get-GlobalHashesFrom7zOutput {
+    param([string[]]$Lines)
+
+    $dataHash = $null
+    $nameDataHash = $null
+
+    foreach ($line in $Lines) {
+
+        if ($line -match "SHA256 for data:\s+([0-9a-fA-F\-]+)") {
+            $dataHash = $matches[1]
+        }
+
+        if ($line -match "SHA256 for data and names:\s+([0-9a-fA-F\-]+)") {
+            $nameDataHash = $matches[1]
+        }
+    }
 
     return [PSCustomObject]@{
-        DriveLetter = $driveLetter
-        VolumeName  = $disk.VolumeName
-        FileSystem  = $disk.FileSystem
-        SizeGB      = "{0:N2} GB" -f ($disk.Size / 1GB)
-        FreeGB      = "{0:N2} GB" -f ($disk.FreeSpace / 1GB)
-        Serial      = $physical.SerialNumber
-        Model       = $physical.Model
-        Interface   = $physical.InterfaceType
+        DataHash     = $dataHash
+        NameDataHash = $nameDataHash
     }
 }
 
-$globalStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+function Compare-Integrity {
+    param($Src, $Dst)
 
-Write-Log "===== INICIO DEL PROCESO DE COPIA MIRROR =====" "Cyan"
-Write-Log "Origen: $SourceFolder"
-Write-Log "Destino: $DestinationFolder"
-Write-Log "-----------------------------------------------"
+    Write-Log "Comparando integridad..." "INFO" "Yellow"
 
-# ============================
-#   INFORMACIÓN DE LOS DISCOS
-# ============================
-$DiskSourceInfo = Get-DiskInfoFromPath -FolderPath $SourceFolder
-$DiskDestInfo   = Get-DiskInfoFromPath -FolderPath $DestinationFolder
-
-Write-Log "===== INFORMACIÓN DE LOS DISCOS =====" "Cyan"
-Write-Log "Disco ORIGEN ($($DiskSourceInfo.DriveLetter):)"
-Write-Log "  Modelo:     $($DiskSourceInfo.Model)"
-Write-Log "  Serial:     $($DiskSourceInfo.Serial)"
-Write-Log "  Sistema:    $($DiskSourceInfo.FileSystem)"
-Write-Log "  Tamaño:     $($DiskSourceInfo.SizeGB)"
-Write-Log "  Libre:      $($DiskSourceInfo.FreeGB)"
-Write-Log ""
-Write-Log "Disco DESTINO ($($DiskDestInfo.DriveLetter):)"
-Write-Log "  Modelo:     $($DiskDestInfo.Model)"
-Write-Log "  Serial:     $($DiskDestInfo.Serial)"
-Write-Log "  Sistema:    $($DiskDestInfo.FileSystem)"
-Write-Log "  Tamaño:     $($DiskDestInfo.SizeGB)"
-Write-Log "  Libre:      $($DiskDestInfo.FreeGB)"
-Write-Log "-----------------------------------------------"
-
-# ============================
-# 1. HASH ORIGEN
-# ============================
-$sw1 = [System.Diagnostics.Stopwatch]::StartNew()
-Write-Log "[PASO 1] Calculando hash SHA-256 de la carpeta origen..." "Yellow"
-
-$SourceHashes = Get-FolderHash -Folder $SourceFolder
-$SourceHashes | ForEach-Object { Write-Log "ORIGEN: $_" }
-
-$sw1.Stop()
-Write-Log ("Tiempo paso 1: {0:N1} segundos" -f $sw1.Elapsed.TotalSeconds)
-Write-Log "-----------------------------------------------"
-
-# ============================
-# 2. COPIA MIRROR CON ROBOCOPY
-# ============================
-$sw2 = [System.Diagnostics.Stopwatch]::StartNew()
-Write-Log "[PASO 2] Copiando con ROBOCOPY (modo MIRROR)..." "Yellow"
-
-$cmd = "robocopy `"$SourceFolder`" `"$DestinationFolder`" /MIR /R:2 /W:2 /NFL /NDL /NP /LOG:`"$RoboCopyLog`""
-Write-Log "Ejecutando: $cmd"
-
-cmd.exe /c $cmd | ForEach-Object { Write-Log "ROBOCOPY: $_" }
-
-$sw2.Stop()
-Write-Log ("Tiempo paso 2: {0:N1} segundos" -f $sw2.Elapsed.TotalSeconds)
-Write-Log "-----------------------------------------------"
-
-# ============================
-# 3. HASH DESTINO
-# ============================
-$sw3 = [System.Diagnostics.Stopwatch]::StartNew()
-Write-Log "[PASO 3] Calculando hash SHA-256 de la carpeta destino..." "Yellow"
-
-$DestHashes = Get-FolderHash -Folder $DestinationFolder
-$DestHashes | ForEach-Object { Write-Log "DESTINO: $_" }
-
-$sw3.Stop()
-Write-Log ("Tiempo paso 3: {0:N1} segundos" -f $sw3.Elapsed.TotalSeconds)
-Write-Log "-----------------------------------------------"
-
-# ============================
-# 3B. LOG DETALLADO PROFESIONAL
-# ============================
-Write-Log "[PASO 3B] Generando log detallado profesional de hashes y timestamps..." "Yellow"
-
-@"
-============================================================
-                FILE HASH & METADATA REPORT
-============================================================
-
-Generated on: $(Get-Date -Format "yyyy-MM-dd HH:mm:ss")
-Source Folder: $SourceFolder
-Destination Folder: $DestinationFolder
-------------------------------------------------------------
-
-"@ | Out-File $DetailedLog
-
-function Write-DetailedEntry {
-    param(
-        [string]$FilePath,
-        [string]$HashValue
-    )
-
-    if (Test-Path $FilePath) {
-        $item = Get-Item $FilePath
-        $sizeBytes = $item.Length
-        $sizeGB = "{0:N6}" -f ($sizeBytes / 1GB)
-
-        $entry = @"
-FILE PATH      : $FilePath
-HASH (SHA256)  : $HashValue
-SIZE (BYTES)   : $sizeBytes
-SIZE (GB)      : $sizeGB
-CREATED        : $($item.CreationTime)
-MODIFIED       : $($item.LastWriteTime)
-ACCESSED       : $($item.LastAccessTime)
-------------------------------------------------------------
-
-"@
-
-        Add-Content -Path $DetailedLog -Value $entry
-    }
-}
-
-Add-Content -Path $DetailedLog -Value "====================== ORIGIN FILES ========================`n"
-foreach ($line in $SourceHashes) {
-    $parts = $line -split " = "
-    Write-DetailedEntry -FilePath $parts[0] -HashValue $parts[1]
-}
-
-Add-Content -Path $DetailedLog -Value "===================== DESTINATION FILES ====================`n"
-foreach ($line in $DestHashes) {
-    $parts = $line -split " = "
-    Write-DetailedEntry -FilePath $parts[0] -HashValue $parts[1]
-}
-
-Add-Content -Path $DetailedLog -Value "========================= END REPORT ========================"
-
-Write-Log "Log detallado generado: $DetailedLog" "Green"
-Write-Log "-----------------------------------------------"
-
-# ============================
-# 4. COMPARACIÓN HASHES
-# ============================
-$sw4 = [System.Diagnostics.Stopwatch]::StartNew()
-Write-Log "[PASO 4] Comparando integridad ORIGEN → DESTINO..." "Yellow"
-
-$sourceMap = @{}
-foreach ($line in $SourceHashes) {
-    $parts = $line -split " = "
-    $sourceMap[$parts[0].Replace($SourceFolder,"")] = $parts[1]
-}
-
-$destMap = @{}
-foreach ($line in $DestHashes) {
-    $parts = $line -split " = "
-    $destMap[$parts[0].Replace($DestinationFolder,"")] = $parts[1]
-}
-
-$allFiles = $sourceMap.Keys
-
-foreach ($file in $allFiles) {
-    if ($destMap.ContainsKey($file)) {
-        if ($sourceMap[$file] -eq $destMap[$file]) {
-            Write-Log "OK: $file → HASH IGUAL" "Green"
-        }
-        else {
-            Write-Log "ERROR: $file → HASH DIFERENTE" "Red"
-        }
+    if ($Src.DataHash -eq $Dst.DataHash) {
+        Write-Log "OK: SHA256 for data -> MATCH" "INFO" "Green"
     }
     else {
-        Write-Log "FALTA EN DESTINO: $file" "Red"
+        Write-Log "ERROR: SHA256 for data -> MISMATCH" "INFO" "Red"
     }
-}
 
-$sw4.Stop()
-Write-Log ("Tiempo paso 4: {0:N1} segundos" -f $sw4.Elapsed.TotalSeconds)
-Write-Log "-----------------------------------------------"
-
-# ============================
-# RESUMEN FINAL
-# ============================
-$globalStopwatch.Stop()
-
-$srcSize = (Get-ChildItem -Path $SourceFolder -Recurse -File | Measure-Object -Property Length -Sum).Sum
-$dstSize = (Get-ChildItem -Path $DestinationFolder -Recurse -File | Measure-Object -Property Length -Sum).Sum
-
-Write-Log "========== RESUMEN FINAL ==========" "Cyan"
-Write-Log "Carpeta origen: $SourceFolder"
-Write-Log "Carpeta destino: $DestinationFolder"
-Write-Log "Tamaño origen:  $(Format-SizeMB $srcSize)"
-Write-Log "Tamaño destino: $(Format-SizeMB $dstSize)"
-Write-Log ("Tiempo total: {0:N1} segundos" -f $globalStopwatch.Elapsed.TotalSeconds)
-Write-Log "Estado final: COMPLETADO SIN ERRORES"
-Write-Log "==================================" "Cyan"
-
-```
-
-
-## Copia segura rapida
-
-```md
-param(
-    [Parameter(Mandatory = $true)]
-    [string]$Path,
-
-    [Parameter(Mandatory = $true)]
-    [string]$DestinationName
-)
-
-# ============================
-#   OPTIMIZACIÓN DEL PROCESO
-# ============================
-(Get-Process -Id $PID).PriorityClass = "High"
-
-# ============================
-#   PREPARAR RUTAS
-# ============================
-$SourceFolder      = $Path
-$DestinationFolder = $DestinationName
-
-New-Item -ItemType Directory -Path $DestinationFolder -Force | Out-Null
-
-$TimeStamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
-
-$ParentFolder = Split-Path $DestinationFolder -Parent
-$LogsFolder   = Join-Path $ParentFolder "Logs"
-New-Item -ItemType Directory -Path $LogsFolder -Force | Out-Null
-
-$LogFile       = Join-Path $LogsFolder "BackupLog_$TimeStamp.log"
-$DetailedLog   = Join-Path $LogsFolder "Integrity_$TimeStamp.log"
-$RoboCopyLog   = Join-Path $LogsFolder "Robocopy_$TimeStamp.log"
-
-# ============================
-#   LOGGING
-# ============================
-function Write-Log {
-    param([string]$Message, [ConsoleColor]$Color = [ConsoleColor]::Gray)
-    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    $line = "[$timestamp] $Message"
-    $oldColor = $Host.UI.RawUI.ForegroundColor
-    $Host.UI.RawUI.ForegroundColor = $Color
-    Write-Host $line
-    $Host.UI.RawUI.ForegroundColor = $oldColor
-    Add-Content -Path $LogFile -Value $line
-}
-
-# ============================
-#   HASH PARALELO (PowerShell 7)
-# ============================
-function Get-FolderHash {
-    param([string]$Folder)
-
-    $files = Get-ChildItem -Path $Folder -Recurse -File
-    $total = $files.Count
-    $counter = 0
-
-    $hashList = $files | ForEach-Object -Parallel {
-        $hash = Get-FileHash -Algorithm SHA256 -Path $_.FullName
-        "$($_.FullName) = $($hash.Hash)"
-    } -ThrottleLimit 12
-
-    return $hashList
-}
-
-# ============================
-#   INICIO
-# ============================
-$globalStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
-
-Write-Log "===== INICIO DEL PROCESO ULTRA-RÁPIDO =====" "Cyan"
-Write-Log "Origen: $SourceFolder"
-Write-Log "Destino: $DestinationFolder"
-Write-Log "-----------------------------------------------"
-
-# ============================
-# 1. HASH ORIGEN (PARALELO)
-# ============================
-Write-Log "[PASO 1] Calculando hashes del ORIGEN (paralelo)..." "Yellow"
-$sw1 = [System.Diagnostics.Stopwatch]::StartNew()
-
-$SourceHashes = Get-FolderHash -Folder $SourceFolder
-
-$sw1.Stop()
-Write-Log ("Tiempo paso 1: {0:N1} segundos" -f $sw1.Elapsed.TotalSeconds)
-Write-Log "-----------------------------------------------"
-
-# ============================
-# 2. ROBOCOPY ULTRA-RÁPIDO
-# ============================
-Write-Log "[PASO 2] Copiando con ROBOCOPY ULTRA-RÁPIDO..." "Yellow"
-$sw2 = [System.Diagnostics.Stopwatch]::StartNew()
-
-$cmd = "robocopy `"$SourceFolder`" `"$DestinationFolder`" /MIR /MT:32 /R:1 /W:1 /J /NFL /NDL /NP /LOG:`"$RoboCopyLog`""
-cmd.exe /c $cmd
-
-$sw2.Stop()
-Write-Log ("Tiempo paso 2: {0:N1} segundos" -f $sw2.Elapsed.TotalSeconds)
-Write-Log "-----------------------------------------------"
-
-# ============================
-# 3. HASH DESTINO (PARALELO)
-# ============================
-Write-Log "[PASO 3] Calculando hashes del DESTINO (paralelo)..." "Yellow"
-$sw3 = [System.Diagnostics.Stopwatch]::StartNew()
-
-$DestHashes = Get-FolderHash -Folder $DestinationFolder
-
-$sw3.Stop()
-Write-Log ("Tiempo paso 3: {0:N1} segundos" -f $sw3.Elapsed.TotalSeconds)
-Write-Log "-----------------------------------------------"
-
-# ============================
-# 4. COMPARACIÓN
-# ============================
-Write-Log "[PASO 4] Comparando integridad ORIGEN → DESTINO..." "Yellow"
-$sw4 = [System.Diagnostics.Stopwatch]::StartNew()
-
-$sourceMap = @{}
-foreach ($line in $SourceHashes) {
-    $parts = $line -split " = "
-    $sourceMap[$parts[0].Replace($SourceFolder,"")] = $parts[1]
-}
-
-$destMap = @{}
-foreach ($line in $DestHashes) {
-    $parts = $line -split " = "
-    $destMap[$parts[0].Replace($DestinationFolder,"")] = $parts[1]
-}
-
-foreach ($file in $sourceMap.Keys) {
-    if ($destMap.ContainsKey($file)) {
-        if ($sourceMap[$file] -eq $destMap[$file]) {
-            Write-Log "OK: $file → HASH IGUAL" "Green"
-        }
-        else {
-            Write-Log "ERROR: $file → HASH DIFERENTE" "Red"
-        }
+    if ($Src.NameDataHash -eq $Dst.NameDataHash) {
+        Write-Log "OK: SHA256 for data and names -> MATCH" "INFO" "Green"
     }
     else {
-        Write-Log "FALTA EN DESTINO: $file" "Red"
+        Write-Log "ERROR: SHA256 for data and names -> MISMATCH" "INFO" "Red"
     }
 }
 
-$sw4.Stop()
-Write-Log ("Tiempo paso 4: {0:N1} segundos" -f $sw4.Elapsed.TotalSeconds)
-Write-Log "-----------------------------------------------"
-
-# ============================
-# RESUMEN FINAL
-# ============================
-$globalStopwatch.Stop()
-
-Write-Log "========== RESUMEN FINAL ==========" "Cyan"
-Write-Log ("Tiempo total: {0:N1} segundos" -f $globalStopwatch.Elapsed.TotalSeconds)
-Write-Log "Estado final: COMPLETADO SIN ERRORES"
-Write-Log "==================================" "Cyan"
-
-```
-
-
-
-## Copia segura y barra de progreso
-```md
-param(
-    [Parameter(Mandatory = $true)]
-    [string]$Path,
-
-    [Parameter(Mandatory = $true)]
-    [string]$DestinationName
-)
-
-# ============================
-#   OPTIMIZACIÓN DEL PROCESO
-# ============================
-(Get-Process -Id $PID).PriorityClass = "High"
-
-# ============================
-#   PREPARAR RUTAS
-# ============================
-$SourceFolder      = $Path
-$DestinationFolder = $DestinationName
-
-New-Item -ItemType Directory -Path $DestinationFolder -Force | Out-Null
-
-$TimeStamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
-
-$ParentFolder = Split-Path $DestinationFolder -Parent
-$LogsFolder   = Join-Path $ParentFolder "Logs"
-New-Item -ItemType Directory -Path $LogsFolder -Force | Out-Null
-
-$LogFile       = Join-Path $LogsFolder "BackupLog_$TimeStamp.log"
-$DetailedLog   = Join-Path $LogsFolder "Integrity_$TimeStamp.log"
-$RoboCopyLog   = Join-Path $LogsFolder "Robocopy_$TimeStamp.log"
-
-# ============================
-#   LOGGING
-# ============================
-function Write-Log {
-    param([string]$Message, [ConsoleColor]$Color = [ConsoleColor]::Gray)
-    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    $line = "[$timestamp] $Message"
-    $oldColor = $Host.UI.RawUI.ForegroundColor
-    $Host.UI.RawUI.ForegroundColor = $Color
-    Write-Host $line
-    $Host.UI.RawUI.ForegroundColor = $oldColor
-    Add-Content -Path $LogFile -Value $line
-}
-
-# ============================
-#   HASH PARALELO + PROGRESO GLOBAL
-# ============================
-function Get-FolderHash {
-    param([string]$Folder, [string]$Label)
-
-    $files = Get-ChildItem -Path $Folder -Recurse -File
-    $total = $files.Count
-    $script:counter = 0
-
-    $hashList = $files | ForEach-Object -Parallel {
-        $hash = Get-FileHash -Algorithm SHA256 -Path $_.FullName
-        [PSCustomObject]@{
-            Path = $_.FullName
-            Hash = $hash.Hash
-        }
-    } -ThrottleLimit 12 -AsJob | Receive-Job -Wait -AutoRemoveJob -WriteEvents | ForEach-Object {
-
-        $script:counter++
-        $percent = ($script:counter / $total) * 100
-
-        Write-Progress `
-            -Activity $Label `
-            -Status "Procesando archivos..." `
-            -PercentComplete $percent
-
-        "$($_.Path) = $($_.Hash)"
-    }
-
-    Write-Progress -Activity "Completado" -Completed
-    return $hashList
-}
-
-# ============================
-#   ROBOCOPY CON PROGRESO GLOBAL
-# ============================
-function Invoke-RobocopyWithProgress {
-    param(
-        [string]$Source,
-        [string]$Destination,
-        [string]$LogFile
-    )
-
-    $totalFiles = (Get-ChildItem -Path $Source -Recurse -File).Count
-    $processed = 0
-
-    Write-Host "Copiando archivos con ROBOCOPY..."
-
-    $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName = "robocopy.exe"
-    $psi.Arguments = "`"$Source`" `"$Destination`" /MIR /MT:32 /R:1 /W:1 /J /NP /NFL /NDL"
-    $psi.RedirectStandardOutput = $true
-    $psi.UseShellExecute = $false
-    $psi.CreateNoWindow = $true
-
-    $proc = [System.Diagnostics.Process]::Start($psi)
-
-    while (-not $proc.StandardOutput.EndOfStream) {
-        $line = $proc.StandardOutput.ReadLine()
-
-        if ($line -match "New File" -or $line -match "Newer" -or $line -match "Older") {
-            $processed++
-            $percent = [math]::Min(100, ($processed / $totalFiles) * 100)
-
-            Write-Progress `
-                -Activity "Copiando archivos con ROBOCOPY..." `
-                -Status "Procesando elementos..." `
-                -PercentComplete $percent
-        }
-
-        Add-Content -Path $LogFile -Value $line
-    }
-
-    Write-Progress -Activity "Completado" -Completed
-}
-
-# ============================
-#   INICIO
-# ============================
-$globalStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
-
-Write-Log "===== INICIO DEL PROCESO ULTRA-RÁPIDO =====" "Cyan"
-Write-Log "Origen: $SourceFolder"
-Write-Log "Destino: $DestinationFolder"
-Write-Log "-----------------------------------------------"
-
-# ============================
-# 1. HASH ORIGEN (PARALELO)
-# ============================
-Write-Log "[PASO 1] Calculando hashes del ORIGEN (paralelo)..." "Yellow"
-$sw1 = [System.Diagnostics.Stopwatch]::StartNew()
-
-$SourceHashes = Get-FolderHash -Folder $SourceFolder -Label "Calculando hashes del ORIGEN..."
-
-$sw1.Stop()
-Write-Log ("Tiempo paso 1: {0:N1} segundos" -f $sw1.Elapsed.TotalSeconds)
-Write-Log "-----------------------------------------------"
-
-# ============================
-# 2. ROBOCOPY ULTRA-RÁPIDO
-# ============================
-Write-Log "[PASO 2] Copiando con ROBOCOPY ULTRA-RÁPIDO..." "Yellow"
-$sw2 = [System.Diagnostics.Stopwatch]::StartNew()
-
-Invoke-RobocopyWithProgress -Source $SourceFolder -Destination $DestinationFolder -LogFile $RoboCopyLog
-
-$sw2.Stop()
-Write-Log ("Tiempo paso 2: {0:N1} segundos" -f $sw2.Elapsed.TotalSeconds)
-Write-Log "-----------------------------------------------"
-
-# ============================
-# 3. HASH DESTINO (PARALELO)
-# ============================
-Write-Log "[PASO 3] Calculando hashes del DESTINO (paralelo)..." "Yellow"
-$sw3 = [System.Diagnostics.Stopwatch]::StartNew()
-
-$DestHashes = Get-FolderHash -Folder $DestinationFolder -Label "Calculando hashes del DESTINO..."
-
-$sw3.Stop()
-Write-Log ("Tiempo paso 3: {0:N1} segundos" -f $sw3.Elapsed.TotalSeconds)
-Write-Log "-----------------------------------------------"
-
-# ============================
-# 4. COMPARACIÓN
-# ============================
-Write-Log "[PASO 4] Comparando integridad ORIGEN → DESTINO..." "Yellow"
-$sw4 = [System.Diagnostics.Stopwatch]::StartNew()
-
-$sourceMap = @{}
-foreach ($line in $SourceHashes) {
-    $parts = $line -split " = "
-    $sourceMap[$parts[0].Replace($SourceFolder,"")] = $parts[1]
-}
-
-$destMap = @{}
-foreach ($line in $DestHashes) {
-    $parts = $line -split " = "
-    $destMap[$parts[0].Replace($DestinationFolder,"")] = $parts[1]
-}
-
-foreach ($file in $sourceMap.Keys) {
-    if ($destMap.ContainsKey($file)) {
-        if ($sourceMap[$file] -eq $destMap[$file]) {
-            Write-Log "OK: $file → HASH IGUAL" "Green"
-        }
-        else {
-            Write-Log "ERROR: $file → HASH DIFERENTE" "Red"
-        }
-    }
-    else {
-        Write-Log "FALTA EN DESTINO: $file" "Red"
-    }
-}
-
-$sw4.Stop()
-Write-Log ("Tiempo paso 4: {0:N1} segundos" -f $sw4.Elapsed.TotalSeconds)
-Write-Log "-----------------------------------------------"
-
-# ============================
-# RESUMEN FINAL
-# ============================
-$globalStopwatch.Stop()
-
-Write-Log "========== RESUMEN FINAL ==========" "Cyan"
-Write-Log ("Tiempo total: {0:N1} segundos" -f $globalStopwatch.Elapsed.TotalSeconds)
-Write-Log "Estado final: COMPLETADO SIN ERRORES"
-Write-Log "==================================" "Cyan"
-
-```
-
-
-## Copia Segura con menu
-
-```md
-param(
-    [Parameter(Mandatory = $true)]
-    [string]$Path,
-
-    [Parameter(Mandatory = $true)]
-    [string]$DestinationName
-)
-
-# ============================
-#   OPTIMIZACIÓN DEL PROCESO
-# ============================
-(Get-Process -Id $PID).PriorityClass = "High"
-
-# ============================
-#   PREPARAR RUTAS
-# ============================
-$SourceFolder      = $Path
-$DestinationFolder = $DestinationName
-
-New-Item -ItemType Directory -Path $DestinationFolder -Force | Out-Null
-
-$TimeStamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
-
-$ParentFolder = Split-Path $DestinationFolder -Parent
-$LogsFolder   = Join-Path $ParentFolder "Logs"
-New-Item -ItemType Directory -Path $LogsFolder -Force | Out-Null
-
-$LogFile       = Join-Path $LogsFolder "BackupLog_$TimeStamp.log"
-$DetailedLog   = Join-Path $LogsFolder "Integrity_$TimeStamp.log"
-$RoboCopyLog   = Join-Path $LogsFolder "Robocopy_$TimeStamp.log"
-
-# ============================
-#   LOGGING
-# ============================
-function Write-Log {
-    param([string]$Message, [ConsoleColor]$Color = [ConsoleColor]::Gray)
-    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    $line = "[$timestamp] $Message"
-    $oldColor = $Host.UI.RawUI.ForegroundColor
-    $Host.UI.RawUI.ForegroundColor = $Color
-    Write-Host $line
-    $Host.UI.RawUI.ForegroundColor = $oldColor
-    Add-Content -Path $LogFile -Value $line
-}
-
-# ============================
-#   HASH PARALELO + PROGRESO GLOBAL
-# ============================
-function Get-FolderHash {
-    param([string]$Folder, [string]$Label)
-
-    $files = Get-ChildItem -Path $Folder -Recurse -File
-    $total = $files.Count
-    $script:counter = 0
-
-    $hashList = $files | ForEach-Object -Parallel {
-        $hash = Get-FileHash -Algorithm SHA256 -Path $_.FullName
-        [PSCustomObject]@{
-            Path = $_.FullName
-            Hash = $hash.Hash
-        }
-    } -ThrottleLimit 12 -AsJob | Receive-Job -Wait -AutoRemoveJob -WriteEvents | ForEach-Object {
-
-        $script:counter++
-        $percent = ($script:counter / $total) * 100
-
-        Write-Progress `
-            -Activity $Label `
-            -Status "Procesando archivos..." `
-            -PercentComplete $percent
-
-        "$($_.Path) = $($_.Hash)"
-    }
-
-    Write-Progress -Activity "Completado" -Completed
-    return $hashList
-}
-
-# ============================
-#   ROBOCOPY CON PROGRESO GLOBAL
-# ============================
-function Invoke-RobocopyWithProgress {
-    param(
-        [string]$Source,
-        [string]$Destination,
-        [string]$LogFile
-    )
-
-    $totalFiles = (Get-ChildItem -Path $Source -Recurse -File).Count
-    $processed = 0
-
-    Write-Host "Copiando archivos con ROBOCOPY..."
-
-    $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName = "robocopy.exe"
-    $psi.Arguments = "`"$Source`" `"$Destination`" /MIR /MT:32 /R:1 /W:1 /J /NP /NFL /NDL"
-    $psi.RedirectStandardOutput = $true
-    $psi.UseShellExecute = $false
-    $psi.CreateNoWindow = $true
-
-    $proc = [System.Diagnostics.Process]::Start($psi)
-
-    while (-not $proc.StandardOutput.EndOfStream) {
-        $line = $proc.StandardOutput.ReadLine()
-
-        if ($line -match "New File" -or $line -match "Newer" -or $line -match "Older") {
-            $processed++
-            $percent = [math]::Min(100, ($processed / $totalFiles) * 100)
-
-            Write-Progress `
-                -Activity "Copiando archivos con ROBOCOPY..." `
-                -Status "Procesando elementos..." `
-                -PercentComplete $percent
-        }
-
-        Add-Content -Path $LogFile -Value $line
-    }
-
-    Write-Progress -Activity "Completado" -Completed
-}
-
-# ============================
-#   COMPARACIÓN DE HASHES
-# ============================
-function Compare-Hashes {
-    foreach ($file in $sourceMap.Keys) {
-        if ($destMap.ContainsKey($file)) {
-            if ($sourceMap[$file] -eq $destMap[$file]) {
-                Write-Log "OK: $file → HASH IGUAL" "Green"
-            }
-            else {
-                Write-Log "ERROR: $file → HASH DIFERENTE" "Red"
-            }
-        }
-        else {
-            Write-Log "FALTA EN DESTINO: $file" "Red"
-        }
-    }
-}
-
-# ============================
-#   MENÚ PROFESIONAL
-# ============================
+# MENU PROFESIONAL
 function Show-Menu {
     Clear-Host
-    Write-Host "======================================================" -ForegroundColor Cyan
-    Write-Host "                SISTEMA DE BACKUP AVANZADO            " -ForegroundColor Yellow
-    Write-Host "======================================================" -ForegroundColor Cyan
+    Write-Host "  ███████╗██╗  ██╗███████╗███████╗██████╗ ██████╗ ██╗██████╗  " -ForegroundColor Yellow
+    Write-Host "  ██╔════╝██║  ██║██╔════╝██╔════╝██╔══██╗██╔══██╗██║██╔══██╗ " -ForegroundColor Yellow
+    Write-Host "  ███████╗███████║█████╗  █████╗  ██████╔╝██║  ██║██║██████╔╝ " -ForegroundColor Yellow
+    Write-Host "  ╚════██║██╔══██║██╔══╝  ██╔══╝  ██╔═══╝ ██║  ██║██║██╔═══╝  " -ForegroundColor Yellow
+    Write-Host "  ███████║██║  ██║███████╗███████╗██║     ██████╔╝██║██║      " -ForegroundColor Yellow
+    Write-Host "  ╚══════╝╚═╝  ╚═╝╚══════╝╚══════╝╚═╝     ╚═════╝ ╚═╝╚═╝      " -ForegroundColor Yellow
+    Write-Host "══════════════════════════════════════════════════════════════" -ForegroundColor Yellow
+    Write-Host "              COPIA SEGURA v4.1 · SHEEPDIP SUITE              " -ForegroundColor Yellow
+    Write-Host "══════════════════════════════════════════════════════════════" -ForegroundColor Yellow
     Write-Host ""
-    Write-Host "  1. Ejecutar proceso completo de sincronización (MIRROR)" -ForegroundColor Green
-    Write-Host "  2. Generar hashes del directorio de origen" -ForegroundColor White
-    Write-Host "  3. Realizar copia de seguridad (solo ROBOCOPY)" -ForegroundColor White
-    Write-Host "  4. Generar hashes del directorio de destino" -ForegroundColor White
-    Write-Host "  5. Comparar integridad entre origen y destino" -ForegroundColor White
-    Write-Host "  6. Finalizar y cerrar la herramienta" -ForegroundColor Red
+    Write-Host "  1. Proceso completo (hash origen -> copia -> hash destino -> comparacion)" -ForegroundColor Green
+    Write-Host "  2. Calcular hashes del origen" -ForegroundColor White
+    Write-Host "  3. Copiar solo con Robocopy" -ForegroundColor White
+    Write-Host "  4. Calcular hashes del destino" -ForegroundColor White
+    Write-Host "  5. Comparar integridad" -ForegroundColor White
+    Write-Host "  6. Salir" -ForegroundColor Red
     Write-Host ""
 }
 
 function Start-Menu {
     do {
         Show-Menu
-        $choice = Read-Host "Seleccione una opción"
+        $choice = Read-Host "Seleccione una opcion"
 
         switch ($choice) {
 
             "1" {
-                Write-Log "=== PROCESO COMPLETO DE SINCRONIZACIÓN ===" "Cyan"
+                Get-DiskInfoBlock -Path $SourceFolder -DiskTag "DISK 1"
+                Get-DiskInfoBlock -Path $DestinationFolder -DiskTag "DISK 2"
 
-                $SourceHashes = Get-FolderHash -Folder $SourceFolder -Label "Hashes ORIGEN"
-                Invoke-RobocopyWithProgress -Source $SourceFolder -Destination $DestinationFolder -LogFile $RoboCopyLog
-                $DestHashes = Get-FolderHash -Folder $DestinationFolder -Label "Hashes DESTINO"
+                $src = Get-7ZipHash -Folder $SourceFolder -Label "SOURCE CHECKSUMS"
+                Invoke-Robocopy -Source $SourceFolder -Destination $DestinationFolder
+                $dst = Get-7ZipHash -Folder $DestinationFolder -Label "DESTINATION CHECKSUMS"
 
-                $global:sourceMap = @{}
-                foreach ($line in $SourceHashes) {
-                    $parts = $line -split " = "
-                    $sourceMap[$parts[0].Replace($SourceFolder,"")] = $parts[1]
+                $srcGlobal = Get-GlobalHashesFrom7zOutput -Lines $src
+                $dstGlobal = Get-GlobalHashesFrom7zOutput -Lines $dst
+
+                Compare-Integrity -Src $srcGlobal -Dst $dstGlobal
+                # ============================
+                #   FINAL TIMING
+                # ============================
+
+                $endTime = Get-Date
+                $duration = $endTime - $startTime
+
+                if ($duration.TotalSeconds -lt 60) {
+                    $formatted = "{0:N2} segundos" -f $duration.TotalSeconds
+                }
+                elseif ($duration.TotalMinutes -lt 60) {
+                    $formatted = "{0:N2} minutos" -f $duration.TotalMinutes
+                }
+                else {
+                    $formatted = "{0:N2} horas" -f $duration.TotalHours
                 }
 
-                $global:destMap = @{}
-                foreach ($line in $DestHashes) {
-                    $parts = $line -split " = "
-                    $destMap[$parts[0].Replace($DestinationFolder,"")] = $parts[1]
-                }
+                Write-ColoredLine -Prefix "TIMING" -Text "Tiempo total del proceso: $formatted" "Yellow"
+                Write-ColoredLine -Prefix "TIMING" -Text "Finalizado correctamente." "Yellow"
 
-                Compare-Hashes
+                Write-Progress -Activity "Procesando..." -Completed
                 Pause
             }
 
             "2" {
-                Write-Log "=== HASHES DEL ORIGEN ===" "Cyan"
-                $global:SourceHashes = Get-FolderHash -Folder $SourceFolder -Label "Hashes ORIGEN"
+                Get-DiskInfoBlock -Path $SourceFolder -DiskTag "DISK 1"
+                Get-7ZipHash -Folder $SourceFolder -Label "SOURCE CHECKSUMS"
                 Pause
             }
 
             "3" {
-                Write-Log "=== COPIA SOLO ROBOCOPY ===" "Cyan"
-                Invoke-RobocopyWithProgress -Source $SourceFolder -Destination $DestinationFolder -LogFile $RoboCopyLog
+                Get-DiskInfoBlock -Path $SourceFolder -DiskTag "DISK 1"
+                Get-DiskInfoBlock -Path $DestinationFolder -DiskTag "DISK 2"
+                Invoke-Robocopy -Source $SourceFolder -Destination $DestinationFolder
                 Pause
             }
 
             "4" {
-                Write-Log "=== HASHES DEL DESTINO ===" "Cyan"
-                $global:DestHashes = Get-FolderHash -Folder $DestinationFolder -Label "Hashes DESTINO"
+                Get-DiskInfoBlock -Path $DestinationFolder -DiskTag "DISK 2"
+                Get-7ZipHash -Folder $DestinationFolder -Label "DESTINATION CHECKSUMS"
                 Pause
             }
 
             "5" {
-                Write-Log "=== COMPARACIÓN DE INTEGRIDAD ===" "Cyan"
-                Compare-Hashes
+                Get-DiskInfoBlock -Path $SourceFolder -DiskTag "DISK 1"
+                Get-DiskInfoBlock -Path $DestinationFolder -DiskTag "DISK 2"
+
+                $src = Get-7ZipHash -Folder $SourceFolder -Label "SOURCE CHECKSUMS"
+                $dst = Get-7ZipHash -Folder $DestinationFolder -Label "DESTINATION CHECKSUMS"
+
+                $srcGlobal = Get-GlobalHashesFrom7zOutput -Lines $src
+                $dstGlobal = Get-GlobalHashesFrom7zOutput -Lines $dst
+
+                Compare-Integrity -Src $srcGlobal -Dst $dstGlobal
                 Pause
             }
 
             "6" {
-                Write-Host "Cerrando la herramienta..." -ForegroundColor Red
+                Write-Host "Cerrando..." -ForegroundColor Red
                 return
             }
 
             default {
-                Write-Host "Opción no válida. Intente nuevamente." -ForegroundColor Red
+                Write-Host "Opcion no valida." -ForegroundColor Red
                 Start-Sleep -Seconds 1
             }
         }
@@ -1625,46 +340,34 @@ function Start-Menu {
     } while ($true)
 }
 
-# ============================
-#   EJECUCIÓN DEL MENÚ
-# ============================
+# EJECUCION DEL MENU
 Start-Menu
-
-
 ```
-## COPIA CON ENCABEZADOS CORPORATIVOS
+
+## copia-segura_v4.0.ps1
 ```md
 param(
     [Parameter(Mandatory = $true)]
     [string]$Path,
 
     [Parameter(Mandatory = $true)]
-    [string]$DestinationName
+    [string]$DestinationName,
+
+    [Parameter(Mandatory = $false)]
+    [string]$SevenZipPath = "C:\Program Files\7-Zip\7z.exe"
 )
 
 Clear-Host
-Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
-Write-Host "                 ENTERPRISE BACKUP SUITE               " -ForegroundColor Yellow
-Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
+Write-Host "=======================================================" -ForegroundColor Cyan
+Write-Host "                 COPIA SEGURA - SUITE 4.2              " -ForegroundColor Yellow
+Write-Host "=======================================================" -ForegroundColor Cyan
 Write-Host ""
 
-# ============================
-#   OPTIMIZACIÓN DEL PROCESO
-# ============================
-Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
-Write-Host "                 OPTIMIZACIÓN DEL PROCESO              " -ForegroundColor Yellow
-Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
-
+# OPTIMIZACION DEL PROCESO
+Write-Host "Ajustando prioridad del proceso..." -ForegroundColor DarkGray
 (Get-Process -Id $PID).PriorityClass = "High"
 
-# ============================
-#   PREPARAR RUTAS
-# ============================
-Write-Host ""
-Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
-Write-Host "                     PREPARANDO RUTAS                  " -ForegroundColor Yellow
-Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
-
+# PREPARAR RUTAS
 $SourceFolder      = $Path
 $DestinationFolder = $DestinationName
 
@@ -1673,243 +376,187 @@ New-Item -ItemType Directory -Path $DestinationFolder -Force | Out-Null
 $TimeStamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
 
 $ParentFolder = Split-Path $DestinationFolder -Parent
-$LogsFolder   = Join-Path $ParentFolder "Logs"
+$LogsFolder   = Join-Path $ParentFolder "logs"
 New-Item -ItemType Directory -Path $LogsFolder -Force | Out-Null
 
-$LogFile       = Join-Path $LogsFolder "BackupLog_$TimeStamp.log"
-$DetailedLog   = Join-Path $LogsFolder "Integrity_$TimeStamp.log"
-$RoboCopyLog   = Join-Path $LogsFolder "Robocopy_$TimeStamp.log"
+# LOG ÚNICO
+$LogUnified = Join-Path $LogsFolder "copia_segura_$TimeStamp.log"
 
-# ============================
-#   LOGGING
-# ============================
-Write-Host ""
-Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
-Write-Host "                     SISTEMA DE LOGS                   " -ForegroundColor Yellow
-Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
-
+# LOGGING
 function Write-Log {
-    param([string]$Message, [ConsoleColor]$Color = [ConsoleColor]::Gray)
+    param(
+        [string]$Message,
+        [string]$Tag = "INFO",
+        [ConsoleColor]$Color = "Gray"
+    )
     $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    $line = "[$timestamp] $Message"
-    $oldColor = $Host.UI.RawUI.ForegroundColor
-    $Host.UI.RawUI.ForegroundColor = $Color
-    Write-Host $line
-    $Host.UI.RawUI.ForegroundColor = $oldColor
-    Add-Content -Path $LogFile -Value $line
+    $line = "[$timestamp] [$Tag] $Message"
+    Write-Host $line -ForegroundColor $Color
+    Add-Content -Path $LogUnified -Value $line
 }
 
-# ============================
-#   HASH PARALELO + PROGRESO GLOBAL
-# ============================
-Write-Host ""
-Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
-Write-Host "                     HASH EN PARALELO                  " -ForegroundColor Yellow
-Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
+function Write-ColoredLine {
+    param(
+        [string]$Prefix,
+        [string]$Text,
+        [ConsoleColor]$Color = "Cyan"
+    )
+    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $line = "[$timestamp] [$Prefix] $Text"
+    Write-Host $line -ForegroundColor $Color
+    Add-Content -Path $LogUnified -Value $line
+}
 
-function Get-FolderHash {
+# PROGRESO GLOBAL
+function Show-GlobalProgress {
+    param(
+        [int]$Step,
+        [int]$TotalSteps,
+        [string]$Activity
+    )
+    $percent = [math]::Round(($Step / $TotalSteps) * 100)
+    Write-Progress -Activity $Activity -Status "$percent% completado" -PercentComplete $percent
+}
+
+# HASH 7-ZIP
+function Get-7ZipHash {
     param([string]$Folder, [string]$Label)
 
-    $files = Get-ChildItem -Path $Folder -Recurse -File
-    $total = $files.Count
-    $script:counter = 0
+    Write-Log "Calculando hashes: $Label" "INFO" "Yellow"
 
-    $hashList = $files | ForEach-Object -Parallel {
-        $hash = Get-FileHash -Algorithm SHA256 -Path $_.FullName
-        [PSCustomObject]@{
-            Path = $_.FullName
-            Hash = $hash.Hash
-        }
-    } -ThrottleLimit 12 -AsJob | Receive-Job -Wait -AutoRemoveJob -WriteEvents | ForEach-Object {
+    $output = & "$SevenZipPath" h -scrcSHA256 -r "$Folder" 2>&1
 
-        $script:counter++
-        $percent = ($script:counter / $total) * 100
-
-        Write-Progress `
-            -Activity $Label `
-            -Status "Procesando archivos..." `
-            -PercentComplete $percent
-
-        "$($_.Path) = $($_.Hash)"
+    $output | ForEach-Object {
+        Write-ColoredLine -Prefix "7z" -Text $_ "Blue"
     }
 
-    Write-Progress -Activity "Completado" -Completed
-    return $hashList
+    return $output
 }
 
-# ============================
-#   ROBOCOPY CON PROGRESO GLOBAL
-# ============================
-Write-Host ""
-Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
-Write-Host "                     COPIA ROBOCOPY                    " -ForegroundColor Yellow
-Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
+# ROBOCOPY
+function Invoke-Robocopy {
+    param([string]$Source, [string]$Destination)
 
-function Invoke-RobocopyWithProgress {
-    param(
-        [string]$Source,
-        [string]$Destination,
-        [string]$LogFile
-    )
+    Write-Log "Ejecutando ROBOCOPY..." "INFO" "Yellow"
 
-    $totalFiles = (Get-ChildItem -Path $Source -Recurse -File).Count
-    $processed = 0
+    $cmd = "robocopy `"$Source`" `"$Destination`" /MIR /MT:32 /R:1 /W:1 /NP /TEE"
+    Write-ColoredLine -Prefix "CMD" -Text $cmd "Magenta"
 
-    Write-Host "Copiando archivos con ROBOCOPY..."
-
-    $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName = "robocopy.exe"
-    $psi.Arguments = "`"$Source`" `"$Destination`" /MIR /MT:32 /R:1 /W:1 /J /NP /NFL /NDL"
-    $psi.RedirectStandardOutput = $true
-    $psi.UseShellExecute = $false
-    $psi.CreateNoWindow = $true
-
-    $proc = [System.Diagnostics.Process]::Start($psi)
-
-    while (-not $proc.StandardOutput.EndOfStream) {
-        $line = $proc.StandardOutput.ReadLine()
-
-        if ($line -match "New File" -or $line -match "Newer" -or $line -match "Older") {
-            $processed++
-            $percent = [math]::Min(100, ($processed / $totalFiles) * 100)
-
-            Write-Progress `
-                -Activity "Copiando archivos con ROBOCOPY..." `
-                -Status "Procesando elementos..." `
-                -PercentComplete $percent
-        }
-
-        Add-Content -Path $LogFile -Value $line
-    }
-
-    Write-Progress -Activity "Completado" -Completed
-}
-
-# ============================
-#   COMPARACIÓN DE HASHES
-# ============================
-Write-Host ""
-Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
-Write-Host "                   COMPARACIÓN DE HASHES               " -ForegroundColor Yellow
-Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
-
-function Compare-Hashes {
-    foreach ($file in $sourceMap.Keys) {
-        if ($destMap.ContainsKey($file)) {
-            if ($sourceMap[$file] -eq $destMap[$file]) {
-                Write-Log "OK: $file → HASH IGUAL" "Green"
-            }
-            else {
-                Write-Log "ERROR: $file → HASH DIFERENTE" "Red"
-            }
-        }
-        else {
-            Write-Log "FALTA EN DESTINO: $file" "Red"
-        }
+    cmd.exe /c $cmd | ForEach-Object {
+        Write-ColoredLine -Prefix "robocopy" -Text $_ "Blue"
     }
 }
 
-# ============================
-#   MENÚ PROFESIONAL
-# ============================
+# COMPARACION DE INTEGRIDAD
+function Get-GlobalHashesFrom7zOutput {
+    param([string[]]$Lines)
+
+    $dataHash      = $null
+    $nameDataHash  = $null
+
+    foreach ($line in $Lines) {
+
+        if ($line -match "SHA256 for data:\s+([0-9a-fA-F\-]+)") {
+            $dataHash = $matches[1]
+        }
+
+        if ($line -match "SHA256 for data and names:\s+([0-9a-fA-F\-]+)") {
+            $nameDataHash = $matches[1]
+        }
+    }
+
+    return [PSCustomObject]@{
+        DataHash     = $dataHash
+        NameDataHash = $nameDataHash
+    }
+}
+
+function Compare-Integrity {
+    param($Src, $Dst)
+
+    Write-Log "Comparando integridad..." "INFO" "Yellow"
+
+    if ($Src.DataHash -eq $Dst.DataHash) {
+        Write-Log "OK: SHA256 for data -> MATCH" "INFO" "Green"
+    } else {
+        Write-Log "ERROR: SHA256 for data -> MISMATCH" "INFO" "Red"
+    }
+
+    if ($Src.NameDataHash -eq $Dst.NameDataHash) {
+        Write-Log "OK: SHA256 for data and names -> MATCH" "INFO" "Green"
+    } else {
+        Write-Log "ERROR: SHA256 for data and names -> MISMATCH" "INFO" "Red"
+    }
+}
+
+# MENU PROFESIONAL
 function Show-Menu {
     Clear-Host
-    Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
-    Write-Host "                 ENTERPRISE BACKUP SUITE               " -ForegroundColor Yellow
-    Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
+    Write-Host "=======================================================" -ForegroundColor Cyan
+    Write-Host "                 COPIA SEGURA - SUITE 4.2              " -ForegroundColor Yellow
+    Write-Host "=======================================================" -ForegroundColor Cyan
     Write-Host ""
-    Write-Host "  1. Ejecutar proceso completo de sincronización (MIRROR)" -ForegroundColor Green
-    Write-Host "  2. Generar hashes del directorio de origen" -ForegroundColor White
-    Write-Host "  3. Realizar copia de seguridad (solo ROBOCOPY)" -ForegroundColor White
-    Write-Host "  4. Generar hashes del directorio de destino" -ForegroundColor White
-    Write-Host "  5. Comparar integridad entre origen y destino" -ForegroundColor White
-    Write-Host "  6. Finalizar y cerrar la herramienta" -ForegroundColor Red
+    Write-Host "  1. Proceso completo (hash origen -> copia -> hash destino -> comparacion)" -ForegroundColor Green
+    Write-Host "  2. Calcular hashes del origen" -ForegroundColor White
+    Write-Host "  3. Copiar solo con Robocopy" -ForegroundColor White
+    Write-Host "  4. Calcular hashes del destino" -ForegroundColor White
+    Write-Host "  5. Comparar integridad" -ForegroundColor White
+    Write-Host "  6. Salir" -ForegroundColor Red
     Write-Host ""
 }
 
 function Start-Menu {
     do {
         Show-Menu
-        $choice = Read-Host "Seleccione una opción"
+        $choice = Read-Host "Seleccione una opcion"
 
         switch ($choice) {
 
             "1" {
-                Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
-                Write-Host "         EJECUTANDO PROCESO COMPLETO DE BACKUP         " -ForegroundColor Yellow
-                Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
+                $src = Get-7ZipHash -Folder $SourceFolder -Label "SOURCE CHECKSUMS"
+                Invoke-Robocopy -Source $SourceFolder -Destination $DestinationFolder
+                $dst = Get-7ZipHash -Folder $DestinationFolder -Label "DESTINATION CHECKSUMS"
 
-                Write-Log "=== PROCESO COMPLETO DE SINCRONIZACIÓN ===" "Cyan"
+                $srcGlobal = Get-GlobalHashesFrom7zOutput -Lines $src
+                $dstGlobal = Get-GlobalHashesFrom7zOutput -Lines $dst
 
-                $SourceHashes = Get-FolderHash -Folder $SourceFolder -Label "Hashes ORIGEN"
-                Invoke-RobocopyWithProgress -Source $SourceFolder -Destination $DestinationFolder -LogFile $RoboCopyLog
-                $DestHashes = Get-FolderHash -Folder $DestinationFolder -Label "Hashes DESTINO"
-
-                $global:sourceMap = @{}
-                foreach ($line in $SourceHashes) {
-                    $parts = $line -split " = "
-                    $sourceMap[$parts[0].Replace($SourceFolder,"")] = $parts[1]
-                }
-
-                $global:destMap = @{}
-                foreach ($line in $DestHashes) {
-                    $parts = $line -split " = "
-                    $destMap[$parts[0].Replace($DestinationFolder,"")] = $parts[1]
-                }
-
-                Compare-Hashes
+                Compare-Integrity -Src $srcGlobal -Dst $dstGlobal
                 Pause
             }
 
             "2" {
-                Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
-                Write-Host "                 HASHES DEL DIRECTORIO ORIGEN          " -ForegroundColor Yellow
-                Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
-
-                Write-Log "=== HASHES DEL ORIGEN ===" "Cyan"
-                $global:SourceHashes = Get-FolderHash -Folder $SourceFolder -Label "Hashes ORIGEN"
+                Get-7ZipHash -Folder $SourceFolder -Label "SOURCE CHECKSUMS"
                 Pause
             }
 
             "3" {
-                Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
-                Write-Host "                     COPIA SOLO ROBOCOPY               " -ForegroundColor Yellow
-                Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
-
-                Write-Log "=== COPIA SOLO ROBOCOPY ===" "Cyan"
-                Invoke-RobocopyWithProgress -Source $SourceFolder -Destination $DestinationFolder -LogFile $RoboCopyLog
+                Invoke-Robocopy -Source $SourceFolder -Destination $DestinationFolder
                 Pause
             }
 
             "4" {
-                Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
-                Write-Host "                 HASHES DEL DIRECTORIO DESTINO         " -ForegroundColor Yellow
-                Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
-
-                Write-Log "=== HASHES DEL DESTINO ===" "Cyan"
-                $global:DestHashes = Get-FolderHash -Folder $DestinationFolder -Label "Hashes DESTINO"
+                Get-7ZipHash -Folder $DestinationFolder -Label "DESTINATION CHECKSUMS"
                 Pause
             }
 
             "5" {
-                Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
-                Write-Host "                 COMPARACIÓN DE INTEGRIDAD             " -ForegroundColor Yellow
-                Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
+                $src = Get-7ZipHash -Folder $SourceFolder -Label "SOURCE CHECKSUMS"
+                $dst = Get-7ZipHash -Folder $DestinationFolder -Label "DESTINATION CHECKSUMS"
 
-                Write-Log "=== COMPARACIÓN DE INTEGRIDAD ===" "Cyan"
-                Compare-Hashes
+                $srcGlobal = Get-GlobalHashesFrom7zOutput -Lines $src
+                $dstGlobal = Get-GlobalHashesFrom7zOutput -Lines $dst
+
+                Compare-Integrity -Src $srcGlobal -Dst $dstGlobal
                 Pause
             }
 
             "6" {
-                Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
-                Write-Host "                     CERRANDO SISTEMA                  " -ForegroundColor Red
-                Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
+                Write-Host "Cerrando..." -ForegroundColor Red
                 return
             }
 
             default {
-                Write-Host "Opción no válida. Intente nuevamente." -ForegroundColor Red
+                Write-Host "Opcion no valida." -ForegroundColor Red
                 Start-Sleep -Seconds 1
             }
         }
@@ -1917,11 +564,372 @@ function Start-Menu {
     } while ($true)
 }
 
-# ============================
-#   EJECUCIÓN DEL MENÚ
-# ============================
+# EJECUCION DEL MENU
 Start-Menu
+```
 
+## copia-segura_v3.3.ps1
+```md
+param(
+    [Parameter(Mandatory = $true)]
+    [string]$Path,
+
+    [Parameter(Mandatory = $true)]
+    [string]$DestinationName,
+
+    [Parameter(Mandatory = $false)]
+    [string]$SevenZipPath = "C:\Program Files\7-Zip\7z.exe"
+)
+
+# ============================
+#   PROCESS PRIORITY
+# ============================
+(Get-Process -Id $PID).PriorityClass = "High"
+
+# ============================
+#   PREPARE PATHS
+# ============================
+$SourceFolder      = $Path
+$DestinationFolder = $DestinationName
+
+New-Item -ItemType Directory -Path $DestinationFolder -Force | Out-Null
+
+$TimeStamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
+
+$ParentFolder = Split-Path $DestinationFolder -Parent
+$LogsFolder   = Join-Path $ParentFolder "logs"
+New-Item -ItemType Directory -Path $LogsFolder -Force | Out-Null
+
+$LogProcess   = Join-Path $LogsFolder "process_$TimeStamp.log"
+$LogChecksum  = Join-Path $LogsFolder "checksum_$TimeStamp.log"
+$LogRobocopy  = Join-Path $LogsFolder "robocopy_$TimeStamp.log"
+
+# ============================
+#   FUNCTIONS
+# ============================
+function Write-Log {
+    param([string]$Message, [ConsoleColor]$Color = [ConsoleColor]::Gray)
+    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $line = "[$timestamp] [INFO] $Message"
+    $old = $Host.UI.RawUI.ForegroundColor
+    $Host.UI.RawUI.ForegroundColor = $Color
+    Write-Host $line
+    $Host.UI.RawUI.ForegroundColor = $old
+    Add-Content -Path $LogProcess -Value $line
+}
+
+function Write-ColoredLine {
+    param(
+        [string]$Prefix,
+        [string]$Text,
+        [ConsoleColor]$Color = "Blue"
+    )
+    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $old = $Host.UI.RawUI.ForegroundColor
+    $Host.UI.RawUI.ForegroundColor = $Color
+    Write-Host "[$timestamp] [$Prefix] $Text"
+    $Host.UI.RawUI.ForegroundColor = $old
+}
+
+function Show-GlobalProgress {
+    param(
+        [int]$Step,
+        [int]$TotalSteps,
+        [string]$Activity
+    )
+    $percent = [math]::Round(($Step / $TotalSteps) * 100)
+    Write-Progress -Activity $Activity -Status "$percent% completed" -PercentComplete $percent
+}
+
+function Get-GlobalHashesFrom7zOutput {
+    param([string[]]$Lines)
+
+    $dataHash      = $null
+    $nameDataHash  = $null
+
+    foreach ($line in $Lines) {
+
+        if ($line -match 'SHA256 for data:\s+([0-9a-fA-F\-]+)') {
+            $dataHash = $matches[1]
+        }
+
+        if ($line -match 'SHA256 for data and names:\s+([0-9a-fA-F\-]+)') {
+            $nameDataHash = $matches[1]
+        }
+    }
+
+    return [PSCustomObject]@{
+        DataHash     = $dataHash
+        NameDataHash = $nameDataHash
+    }
+}
+
+# ============================
+#   START
+# ============================
+$globalStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+
+Write-Log "===== PROCESS STARTED =====" "Cyan"
+Write-Log "Source: $SourceFolder"
+Write-Log "Destination: $DestinationFolder"
+Write-Log "7-Zip: $SevenZipPath"
+Write-Log "-----------------------------------------------"
+
+$totalSteps = 4
+$currentStep = 0
+
+# ============================
+# 1. SOURCE CHECKSUMS
+# ============================
+$currentStep++
+Show-GlobalProgress -Step $currentStep -TotalSteps $totalSteps -Activity "Processing..."
+
+Write-Log "Calculating SOURCE checksums..." "Yellow"
+$sw1 = [System.Diagnostics.Stopwatch]::StartNew()
+
+"===== SOURCE CHECKSUMS =====" | Out-File -FilePath $LogChecksum -Encoding UTF8
+
+$hashSrc = & "$SevenZipPath" h -scrcSHA256 -r "$SourceFolder" 2>&1
+
+$hashSrc | ForEach-Object {
+    Write-ColoredLine -Prefix "7z" -Text $_
+}
+
+$hashSrc | Out-File -FilePath $LogChecksum -Encoding UTF8 -Append
+
+$sw1.Stop()
+Write-Log ("Source hashing time: {0:N1} seconds" -f $sw1.Elapsed.TotalSeconds)
+Write-Log "-----------------------------------------------"
+
+# ============================
+# 2. ROBOCOPY
+# ============================
+$currentStep++
+Show-GlobalProgress -Step $currentStep -TotalSteps $totalSteps -Activity "Processing..."
+
+Write-Log "Copying with ROBOCOPY..." "Yellow"
+$sw2 = [System.Diagnostics.Stopwatch]::StartNew()
+
+$cmd = "robocopy `"$SourceFolder`" `"$DestinationFolder`" /MIR /MT:32 /R:1 /W:1 /NP /TEE /LOG:`"$LogRobocopy`""
+
+Write-Log "Executing: $cmd" "Cyan"
+
+cmd.exe /c $cmd | ForEach-Object {
+    Write-ColoredLine -Prefix "robocopy" -Text $_
+}
+
+$sw2.Stop()
+Write-Log ("Copy time: {0:N1} seconds" -f $sw2.Elapsed.TotalSeconds)
+Write-Log "-----------------------------------------------"
+
+# ============================
+# 3. DESTINATION CHECKSUMS
+# ============================
+$currentStep++
+Show-GlobalProgress -Step $currentStep -TotalSteps $totalSteps -Activity "Processing..."
+
+Write-Log "Calculating DESTINATION checksums..." "Yellow"
+$sw3 = [System.Diagnostics.Stopwatch]::StartNew()
+
+"===== DESTINATION CHECKSUMS =====" | Out-File -FilePath $LogChecksum -Encoding UTF8 -Append
+
+$hashDst = & "$SevenZipPath" h -scrcSHA256 -r "$DestinationFolder" 2>&1
+
+$hashDst | ForEach-Object {
+    Write-ColoredLine -Prefix "7z" -Text $_
+}
+
+$hashDst | Out-File -FilePath $LogChecksum -Encoding UTF8 -Append
+
+$sw3.Stop()
+Write-Log ("Destination hashing time: {0:N1} seconds" -f $sw3.Elapsed.TotalSeconds)
+Write-Log "-----------------------------------------------"
+
+# ============================
+# 4. INTEGRITY COMPARISON
+# ============================
+$currentStep++
+Show-GlobalProgress -Step $currentStep -TotalSteps $totalSteps -Activity "Processing..."
+
+Write-Log "Comparing integrity SOURCE → DESTINATION..." "Yellow"
+$sw4 = [System.Diagnostics.Stopwatch]::StartNew()
+
+$srcGlobal = Get-GlobalHashesFrom7zOutput -Lines $hashSrc
+$dstGlobal = Get-GlobalHashesFrom7zOutput -Lines $hashDst
+
+if ($srcGlobal.DataHash -eq $dstGlobal.DataHash) {
+    Write-Log "OK: Global SHA256 for data → MATCH" "Green"
+} else {
+    Write-Log "ERROR: Global SHA256 for data → MISMATCH" "Red"
+}
+
+if ($srcGlobal.NameDataHash -eq $dstGlobal.NameDataHash) {
+    Write-Log "OK: Global SHA256 for data and names → MATCH" "Green"
+} else {
+    Write-Log "ERROR: Global SHA256 for data and names → MISMATCH" "Red"
+}
+
+$sw4.Stop()
+Write-Log ("Integrity check time: {0:N1} seconds" -f $sw4.Elapsed.TotalSeconds)
+Write-Log "-----------------------------------------------"
+
+# ============================
+#   FINAL SUMMARY
+# ============================
+$globalStopwatch.Stop()
+
+# Intelligent time formatting
+$elapsed = $globalStopwatch.Elapsed
+
+if ($elapsed.TotalSeconds -lt 60) {
+    $formatted = "{0:N1} seconds" -f $elapsed.TotalSeconds
+}
+elseif ($elapsed.TotalMinutes -lt 60) {
+    $formatted = "{0} minutes {1} seconds" -f $elapsed.Minutes, $elapsed.Seconds
+}
+else {
+    $formatted = "{0} hours {1} minutes {2} seconds" -f $elapsed.Hours, $elapsed.Minutes, $elapsed.Seconds
+}
+
+Write-Log "========== FINAL SUMMARY ==========" "Cyan"
+Write-Log "Total time: $formatted"
+Write-Log "Process completed successfully."
+Write-Log "==================================" "Cyan"
+
+Write-Progress -Activity "Processing..." -Completed
+```
+
+## copia-segura_v3.2.ps1
+```md
+param(
+    [Parameter(Mandatory = $true)]
+    [string]$Path,
+
+    [Parameter(Mandatory = $true)]
+    [string]$DestinationName,
+
+    [Parameter(Mandatory = $false)]
+    [string]$SevenZipPath = "C:\Program Files\7-Zip\7z.exe"
+)
+
+# ============================
+#   PREPARE PATHS
+# ============================
+$SourceFolder      = $Path
+$DestinationFolder = $DestinationName
+
+New-Item -ItemType Directory -Path $DestinationFolder -Force | Out-Null
+
+$TimeStamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
+
+$ParentFolder = Split-Path $DestinationFolder -Parent
+$LogsFolder   = Join-Path $ParentFolder "logs"
+New-Item -ItemType Directory -Path $LogsFolder -Force | Out-Null
+
+$LogProcess   = Join-Path $LogsFolder "process_$TimeStamp.log"
+$LogChecksum  = Join-Path $LogsFolder "checksum_$TimeStamp.log"
+$LogRobocopy  = Join-Path $LogsFolder "robocopy_$TimeStamp.log"
+
+# ============================
+#   FUNCTIONS
+# ============================
+function Write-Log {
+    param([string]$Message, [ConsoleColor]$Color = [ConsoleColor]::Gray)
+    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $line = "[$timestamp] [INFO] $Message"
+    $old = $Host.UI.RawUI.ForegroundColor
+    $Host.UI.RawUI.ForegroundColor = $Color
+    Write-Host $line
+    $Host.UI.RawUI.ForegroundColor = $old
+    Add-Content -Path $LogProcess -Value $line
+}
+
+function Write-ColoredLine {
+    param(
+        [string]$Prefix,
+        [string]$Text,
+        [ConsoleColor]$Color = "Blue"
+    )
+    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $old = $Host.UI.RawUI.ForegroundColor
+    $Host.UI.RawUI.ForegroundColor = $Color
+    Write-Host "[$timestamp] [$Prefix] $Text"
+    $Host.UI.RawUI.ForegroundColor = $old
+}
+
+# ============================
+#   VALIDATE 7-ZIP
+# ============================
+if (-not (Test-Path $SevenZipPath)) {
+    Write-Log "ERROR: 7z.exe not found at: $SevenZipPath" "Red"
+    exit 1
+}
+
+# ============================
+#   START
+# ============================
+Write-Log "===== PROCESS STARTED =====" "Cyan"
+Write-Log "Source: $SourceFolder"
+Write-Log "Destination: $DestinationFolder"
+Write-Log "7-Zip: $SevenZipPath"
+Write-Log "-----------------------------------------------"
+
+# ============================
+# 1. SOURCE CHECKSUMS
+# ============================
+Write-Log "Calculating SOURCE checksums..." "Yellow"
+
+"===== SOURCE CHECKSUMS =====" | Out-File -FilePath $LogChecksum -Encoding UTF8
+
+$hashSrc = & "$SevenZipPath" h -scrcSHA256 -r "$SourceFolder" 2>&1
+
+$hashSrc | ForEach-Object {
+    Write-ColoredLine -Prefix "7z" -Text $_
+}
+
+$hashSrc | Out-File -FilePath $LogChecksum -Encoding UTF8 -Append
+
+Write-Log "Source checksums saved to checksum.log" "Green"
+Write-Log "-----------------------------------------------"
+
+# ============================
+# 2. ROBOCOPY
+# ============================
+Write-Log "Copying with ROBOCOPY..." "Yellow"
+
+$cmd = "robocopy `"$SourceFolder`" `"$DestinationFolder`" /MIR /MT:32 /R:1 /W:1 /NP /TEE /LOG:`"$LogRobocopy`""
+
+Write-Log "Executing: $cmd" "Cyan"
+
+cmd.exe /c $cmd | ForEach-Object {
+    Write-ColoredLine -Prefix "robocopy" -Text $_
+}
+
+Write-Log "Robocopy completed." "Green"
+Write-Log "-----------------------------------------------"
+
+# ============================
+# 3. DESTINATION CHECKSUMS
+# ============================
+Write-Log "Calculating DESTINATION checksums..." "Yellow"
+
+"===== DESTINATION CHECKSUMS =====" | Out-File -FilePath $LogChecksum -Encoding UTF8 -Append
+
+$hashDst = & "$SevenZipPath" h -scrcSHA256 -r "$DestinationFolder" 2>&1
+
+$hashDst | ForEach-Object {
+    Write-ColoredLine -Prefix "7z" -Text $_
+}
+
+$hashDst | Out-File -FilePath $LogChecksum -Encoding UTF8 -Append
+
+Write-Log "Destination checksums saved to checksum.log" "Green"
+Write-Log "-----------------------------------------------"
+
+# ============================
+#   END
+# ============================
+Write-Log "===== PROCESS COMPLETED =====" "Cyan"
 ```
 
 ## targets.json
