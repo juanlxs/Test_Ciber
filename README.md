@@ -936,18 +936,18 @@ Write-Log "===== PROCESS COMPLETED =====" "Cyan"
 ```md
 {
   "OCM": [
-    { "Host": "192.168.1.10", "Ports": [80, 443] },
-    { "Host": "srv-ocm01", "Ports": [3389] }
+    { "Name": "Servidor Web OCM",   "Host": "192.168.1.10", "Ports": [80, 443] },
+    { "Name": "Control OCM 01",     "Host": "srv-ocm01",    "Ports": [3389] }
   ],
   "CORE": [
-    { "Host": "10.0.0.5", "Ports": [22, 443, 8080] }
+    { "Name": "Core Principal",     "Host": "10.0.0.5",     "Ports": [22, 443, 8080] }
   ],
   "KIOSK": [
-    { "Host": "kiosk-01", "Ports": [80] },
-    { "Host": "kiosk-02", "Ports": [80, 443] }
+    { "Name": "Kiosko 01",          "Host": "kiosk-01",     "Ports": [80] },
+    { "Name": "Kiosko 02",          "Host": "kiosk-02",     "Ports": [80, 443] }
   ],
   "OTROS": [
-    { "Host": "google.com", "Ports": [443] }
+    { "Name": "Google Public",      "Host": "google.com",   "Ports": [443] }
   ]
 }
 
@@ -1177,55 +1177,58 @@ param(
 Clear-Host
 Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
 Write-Host "                     NET TEST SUITE                    " -ForegroundColor Yellow
-Write-Host "                 Version 1.1 - by Juan                 " -ForegroundColor Yellow
+Write-Host "                 Version 1.3 - by Juan                 " -ForegroundColor Yellow
 Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
 Write-Host ""
 
 # ============================
-#   RUTA DEL LOG (MISMA CARPETA DEL SCRIPT)
+#   RUTA DEL SCRIPT + LOGS
 # ============================
-$ScriptFolder = Split-Path -Parent $MyInvocation.MyCommand.Path
-$LogFolder    = Join-Path $ScriptFolder "Logs"
-
+$ScriptPath = Split-Path -Parent $MyInvocation.MyCommand.Path
+$LogFolder  = Join-Path $ScriptPath "logs"
 New-Item -ItemType Directory -Path $LogFolder -Force | Out-Null
 
-$MyHostName = $env:COMPUTERNAME
-$TimeStamp  = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
-
-$LogFile = Join-Path $LogFolder "NetTest_${MyHostName}_$TimeStamp.log"
-
-Write-Host "Log generado en: $LogFile" -ForegroundColor Cyan
-Write-Host ""
+$Hostname  = $env:COMPUTERNAME
+$TimeStamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
+$LogFile   = Join-Path $LogFolder "connectivity_${Hostname}_${TimeStamp}.log"
 
 # ============================
-#   LOGGING
+#   LOG ENTERPRISE
 # ============================
 function Write-Log {
-    param([string]$Message)
+    param(
+        [string]$Message,
+        [string]$Tag = "INFO",
+        [ConsoleColor]$Color = "Gray"
+    )
+
     $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    Add-Content -Path $LogFile -Value "[$timestamp] $Message"
+    $tagPadded = $Tag.ToUpper().PadRight(10)
+    $line = "[$timestamp] [$tagPadded] $Message"
+
+    $oldColor = $Host.UI.RawUI.ForegroundColor
+    $Host.UI.RawUI.ForegroundColor = $Color
+    Write-Host $line
+    $Host.UI.RawUI.ForegroundColor = $oldColor
+
+    Add-Content -Path $LogFile -Value $line
 }
 
 # ============================
-#   DETECTAR IP LOCAL + HOSTNAME
+#   DETECTAR IP LOCAL
 # ============================
 $MyIP = (Get-NetIPAddress -AddressFamily IPv4 `
          | Where-Object { $_.IPAddress -notlike "169.*" -and $_.IPAddress -notlike "127.*" } `
          | Select-Object -First 1 -ExpandProperty IPAddress)
 
-Write-Host "IP local detectada: $MyIP" -ForegroundColor Cyan
-Write-Host "Hostname local: $MyHostName" -ForegroundColor Cyan
+Write-Log "IP local detectada: $MyIP" "INFO" "Cyan"
 Write-Host ""
-
-Write-Log "IP local detectada: $MyIP"
-Write-Log "Hostname local: $MyHostName"
 
 # ============================
 #   CARGAR CONFIGURACIÓN JSON
 # ============================
 if (-not (Test-Path $ConfigPath)) {
-    Write-Host "ERROR: No se encuentra el archivo JSON." -ForegroundColor Red
-    Write-Log  "ERROR: No se encuentra el archivo JSON."
+    Write-Log "No se encuentra el archivo JSON: $ConfigPath" "ERROR" "Red"
     exit 1
 }
 
@@ -1234,14 +1237,13 @@ try {
     $Targets = $jsonRaw | ConvertFrom-Json
 }
 catch {
-    Write-Host "ERROR al leer el JSON." -ForegroundColor Red
-    Write-Log  "ERROR al leer el JSON."
+    Write-Log "ERROR al leer o parsear el JSON: $($_.Exception.Message)" "ERROR" "Red"
     exit 1
 }
 
-Write-Log "Cargando configuración desde: $ConfigPath"
-Write-Log "Grupos definidos: $($Targets.PSObject.Properties.Name -join ', ')"
-Write-Log "------------------------------------------------------------"
+Write-Log "Cargando configuración desde: $ConfigPath" "INFO" "Cyan"
+Write-Log "Grupos definidos: $($Targets.PSObject.Properties.Name -join ', ')" "INFO"
+Write-Log "------------------------------------------------------------" "INFO"
 
 # ============================
 #   LISTAR OBJETIVOS
@@ -1252,18 +1254,24 @@ function Show-Targets {
     Write-Host "                 LISTA DE OBJETIVOS (JSON)             " -ForegroundColor Yellow
     Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
 
+    Write-Log "Mostrando lista de objetivos desde JSON." "INFO"
+
     foreach ($groupProp in $Targets.PSObject.Properties) {
         $groupName = $groupProp.Name
+        $items     = $groupProp.Value
+
         Write-Host ""
         Write-Host "Grupo: $groupName" -ForegroundColor Cyan
-        Write-Log  "Grupo: $groupName"
+        Write-Log  "Grupo: $groupName" "INFO"
 
-        foreach ($item in $groupProp.Value) {
+        foreach ($item in $items) {
             $ports = ($item.Ports -join ",")
-            Write-Host " - Host: $($item.Host)  Puertos: $ports"
-            Write-Log  " - Host: $($item.Host)  Puertos: $ports"
+            Write-Host " - Equipo: $($item.Name)  Host: $($item.Host)  Puertos: $ports"
+            Write-Log  " - Equipo: $($item.Name)  Host: $($item.Host)  Puertos: $ports" "INFO"
         }
     }
+
+    Write-Host ""
 }
 
 # ============================
@@ -1274,70 +1282,71 @@ function Test-NetworkTargets {
     $allItems = @()
 
     foreach ($groupProp in $Targets.PSObject.Properties) {
+        $groupName = $groupProp.Name
         foreach ($item in $groupProp.Value) {
             $allItems += [PSCustomObject]@{
-                Group = $groupProp.Name
+                Group = $groupName
+                Name  = $item.Name
                 Host  = $item.Host
                 Ports = $item.Ports
             }
         }
     }
 
+    if ($allItems.Count -eq 0) {
+        Write-Log "No hay objetivos definidos en el JSON." "WARN" "Yellow"
+        return
+    }
+
     foreach ($entry in $allItems) {
 
         Write-Host ""
         Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
-        Write-Host ("GRUPO: {0}  HOST: {1}" -f $entry.Group, $entry.Host) -ForegroundColor Yellow
+        Write-Host ("GRUPO: {0}  •  EQUIPO: {1}  •  HOST: {2}" -f $entry.Group, $entry.Name, $entry.Host) -ForegroundColor Yellow
         Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
 
-        Write-Log "Grupo: $($entry.Group) - Probando host: $($entry.Host)"
+        Write-Log "Grupo: $($entry.Group)  •  Equipo: $($entry.Name)  •  Host: $($entry.Host)" "NETWORK" "Blue"
 
         # PING
         $pingResult = Test-NetConnection -ComputerName $entry.Host -WarningAction SilentlyContinue
         if ($pingResult.PingSucceeded) {
-            Write-Host "PING OK → $($entry.Host)" -ForegroundColor Green
-            Write-Log  "PING OK → $($entry.Host)"
+            Write-Log "PING OK → $($entry.Host)" "OK" "Green"
         }
         else {
-            Write-Host "PING FALLÓ → $($entry.Host)" -ForegroundColor Red
-            Write-Log  "PING FALLÓ → $($entry.Host)"
+            Write-Log "PING FALLÓ → $($entry.Host)" "ERROR" "Red"
         }
 
         # PUERTOS
         foreach ($port in $entry.Ports) {
             $tcpResult = Test-NetConnection -ComputerName $entry.Host -Port $port -WarningAction SilentlyContinue
             if ($tcpResult.TcpTestSucceeded) {
-                Write-Host "TCP OK (puerto $port) → $($entry.Host)" -ForegroundColor Green
-                Write-Log  "TCP OK (puerto $port) → $($entry.Host)"
+                Write-Log "TCP OK (puerto $port)" "OK" "Green"
             }
             else {
-                Write-Host "TCP FALLÓ (puerto $port) → $($entry.Host)" -ForegroundColor Red
-                Write-Log  "TCP FALLÓ (puerto $port) → $($entry.Host)"
+                Write-Log "TCP FALLÓ (puerto $port)" "ERROR" "Red"
             }
         }
 
-        Write-Host "------------------------------------------------------------"
-        Write-Log  "------------------------------------------------------------"
+        Write-Log "------------------------------------------------------------" "INFO"
     }
 
-    Write-Log "Pruebas de red completadas."
+    Write-Log "Pruebas de red completadas." "SUCCESS" "DarkGreen"
 }
 
 # ============================
-#   MENÚ
+#   MENÚ PROFESIONAL
 # ============================
 function Show-Menu {
     Clear-Host
     Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
     Write-Host "                     NET TEST SUITE                    " -ForegroundColor Yellow
+    Write-Host "                 Version 1.3 - by Juan                 " -ForegroundColor Yellow
     Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
     Write-Host ""
     Write-Host "IP local detectada: $MyIP" -ForegroundColor Cyan
-    Write-Host "Hostname local: $MyHostName" -ForegroundColor Cyan
-    Write-Host "Log generado en: $LogFile" -ForegroundColor Cyan
     Write-Host ""
     Write-Host "  1. Ejecutar pruebas de red" -ForegroundColor Green
-    Write-Host "  2. Mostrar lista de objetivos" -ForegroundColor White
+    Write-Host "  2. Mostrar lista de objetivos (desde JSON)" -ForegroundColor White
     Write-Host "  3. Salir" -ForegroundColor Red
     Write-Host ""
 }
@@ -1348,17 +1357,36 @@ function Start-Menu {
         $choice = Read-Host "Seleccione una opción"
 
         switch ($choice) {
-            "1" { Test-NetworkTargets; Pause }
-            "2" { Show-Targets; Pause }
-            "3" { return }
-            default { Write-Host "Opción no válida." -ForegroundColor Red }
+
+            "1" {
+                Test-NetworkTargets
+                Pause
+            }
+
+            "2" {
+                Show-Targets
+                Pause
+            }
+
+            "3" {
+                Write-Log "Cierre de la herramienta solicitado por el usuario." "INFO" "Yellow"
+                Write-Host "Cerrando Net Test Suite..." -ForegroundColor Red
+                return
+            }
+
+            default {
+                Write-Host "Opción no válida." -ForegroundColor Red
+                Start-Sleep -Seconds 1
+            }
         }
 
     } while ($true)
 }
 
+# ============================
+#   EJECUCIÓN DEL MENÚ
+# ============================
 Start-Menu
-
 ```
 
 ```md
