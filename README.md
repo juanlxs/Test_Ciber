@@ -1,5 +1,83 @@
 # Test_Ciber
 
+##json
+```md
+{
+    "metadata": {
+        "name": "Anonymization Rules",
+        "version": "2.0",
+        "author": "Security & Compliance",
+        "created": "2026-03-26",
+        "description": "Standardized rules for literal and regex-based anonymization of sensitive information."
+    },
+
+    "settings": {
+        "case_sensitive": false,
+        "whole_word_only": true,
+        "default_encoding": "UTF-8"
+    },
+
+    "replacements": [
+        {
+            "match": "Juan",
+            "replace": "UserA",
+            "category": "personal_name",
+            "enabled": true
+        },
+        {
+            "match": "Madrid",
+            "replace": "CityX",
+            "category": "location",
+            "enabled": true
+        },
+        {
+            "match": "Empresa",
+            "replace": "OrgY",
+            "category": "company",
+            "enabled": true
+        },
+        {
+            "match": "Servidor",
+            "replace": "NodeZ",
+            "category": "infrastructure",
+            "enabled": true
+        }
+    ],
+
+    "regex_rules": [
+        {
+            "pattern": "\\b\\d{8}[A-Z]\\b",
+            "replace": "DNI-XXXX",
+            "category": "dni",
+            "description": "Spanish DNI format (8 digits + letter)",
+            "enabled": true
+        },
+        {
+            "pattern": "\\b[0-9]{1,3}(?:\\.[0-9]{1,3}){3}\\b",
+            "replace": "IP-REDACTED",
+            "category": "ip_address",
+            "description": "IPv4 address",
+            "enabled": true
+        },
+        {
+            "pattern": "[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}",
+            "replace": "email@hidden",
+            "category": "email",
+            "description": "Email address",
+            "enabled": true
+        },
+        {
+            "pattern": "\\b[0-9]{9}\\b",
+            "replace": "PHONE-XXXX",
+            "category": "phone",
+            "description": "Generic 9-digit phone number",
+            "enabled": false
+        }
+    ]
+}
+
+```
+
 ## copia-segura_v4.1.ps1
 ```md
 param(
