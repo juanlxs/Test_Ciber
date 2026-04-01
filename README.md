@@ -3,78 +3,69 @@
 ## json
 ```md
 {
-    "settings": {
-        "case_sensitive": false,
-        "whole_word_only": false,
-        "dynamic_ids_enabled": true,
-        "dynamic_start_index": 1,
+  "settings": {
+    "case_sensitive": false,
+    "whole_word_only": false,
+    "dynamic_ids_enabled": true,
+    "dynamic_start_index": 1,
 
-        "dynamic_prefixes": {
-            "personal_name": "usuario",
-            "company": "empresa",
-            "server": "srv",
-            "email": "mail",
-            "project": "proyecto",
-            "file": "anon_file"
-        },
-
-        "sensitive_disk_extensions": [
-            "vhdx", "vhd", "vmdk", "iso", "tib", "tibx"
-        ]
+    "dynamic_prefixes": {
+      "personal_name": "usuario",
+      "company": "empresa",
+      "server": "srv",
+      "email": "mail",
+      "project": "proyecto",
+      "file": "anon_file"
     },
 
-    "fixed_replacements": {
-        "location": [
-            { "match": "Madrid", "replace": "CityX", "enabled": true, "priority": 1 },
-            { "match": "Barcelona", "replace": "CityY", "enabled": true, "priority": 1 }
-        ],
-        "company": [
-            { "match": "EmpresaX", "replace": "OrgA", "enabled": true, "priority": 1 }
-        ]
-    },
+    "sensitive_disk_extensions": [
+      "vhdx", "vhd", "vmdk", "iso", "tib", "tibx"
+    ]
+  },
 
-    "dynamic_replacements": {
-        "personal_name": [
-            { "match": "Juan", "enabled": true, "priority": 1 },
-            { "match": "Pepe", "enabled": true, "priority": 1 },
-            { "match": "María", "enabled": true, "priority": 1 }
-        ],
-        "server": [
-            { "match": "Servidor01", "enabled": true, "priority": 1 },
-            { "match": "Servidor02", "enabled": true, "priority": 1 }
-        ],
-        "email": [],
-        "project": [],
-        "file": []
-    },
+  "fixed_replacements": {
+    "location": [],
+    "company": []
+  },
 
-    "regex_rules_fixed": {
-        "last_modified": [
-            {
-                "pattern": "LAST MODIFIED:\\s*\\d{2}\\/\\d{2}\\/\\d{2}\\s+\\d{2}:\\d{2}:\\d{2}",
-                "replace": "LAST MODIFIED: CENSORED_DATE_TIME",
-                "enabled": true,
-                "priority": 0
-            }
-        ]
-    },
+  "dynamic_replacements": {
+    "personal_name": [],
+    "server": [],
+    "email": [],
+    "project": [],
+    "file": []
+  },
 
-    "regex_rules_dynamic": {
-        "email": [
-            { "pattern": "[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[A-Za-z]{2,}", "enabled": true, "priority": 1 }
-        ],
-        "server": [
-            { "pattern": "\\bSRV-[0-9]{3}\\b", "enabled": true, "priority": 1 }
-        ],
-        "file_path": [
-            { "pattern": "(?:[A-Za-z]:\\\\[^\\\\\\r\\n]+(?:\\\\[^\\\\\\r\\n]+)*)|(?:\\/[^\n\\/\\r]+(?:\\/[^\n\\/\\r]+)*)", "enabled": true, "priority": 1 }
-        ],
-        "file_name": [
-            { "pattern": "\\b([A-Za-z0-9._-]+\\.[A-Za-z0-9]+)\\b", "enabled": true, "priority": 10 }
-        ]
-    }
+  "regex_rules_fixed": {
+    "last_modified": [
+      {
+        "pattern": "LAST MODIFIED:\\s*\\d{2}\\/\\d{2}\\/\\d{2}\\s+\\d{2}:\\d{2}:\\d{2}",
+        "replace": "LAST MODIFIED: CENSORED_DATE_TIME",
+        "enabled": true,
+        "priority": 0
+      }
+    ]
+  },
+
+  "regex_rules_dynamic": {
+    "email": [],
+    "server": [],
+    "file_path": [
+      {
+        "pattern": "(?:[A-Za-z]:\\\\[^\\\\\\r\\n]+(?:\\\\[^\\\\\\r\\n]+)*)|(?:\\/[^\n\\/\\r]+(?:\\/[^\n\\/\\r]+)*)",
+        "enabled": true,
+        "priority": 1
+      }
+    ],
+    "file_name": [
+      {
+        "pattern": "\\b([A-Za-z0-9._-]+\\.[A-Za-z0-9]+)\\b",
+        "enabled": true,
+        "priority": 10
+      }
+    ]
+  }
 }
-
 ```
 
 ## ps1
