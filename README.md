@@ -113,223 +113,123 @@
 
 ## ps1
 ```md
-# ============================
-#  Cargar JSON
-# ============================
-$jsonPath = "config.json"
-$config = Get-Content $jsonPath -Raw | ConvertFrom-Json
+param(
+    [Parameter(Mandatory=$true)]
+    [string]$Path
+)
 
-# Diccionario para almacenar los reemplazos dinámicos generados
+# ============================
+#  Cargar configuración
+# ============================
+$config = Get-Content "$PSScriptRoot\config.json" -Raw | ConvertFrom-Json
 $DynamicMap = @{}
 
 # ============================
-#  Función: Obtener ID dinámico
+#  FUNCIONES
 # ============================
-function Get-DynamicId {
-    param(
-        [string]$value,
-        [string]$category,
-        $config,
-        $DynamicMap
-    )
 
-    if ($DynamicMap.ContainsKey($value)) {
-        return $DynamicMap[$value]
+function Get-DynamicId {
+    param($category, $value, $config, $DynamicMap)
+
+    if (-not $DynamicMap.ContainsKey($category)) {
+        $DynamicMap[$category] = @{}
+    }
+
+    if ($DynamicMap[$category].ContainsKey($value)) {
+        return $DynamicMap[$category][$value]
     }
 
     $prefix = $config.settings.dynamic_prefixes.$category
-    $index = $config.settings.dynamic_start_index + $DynamicMap.Count
-
+    $index = $DynamicMap[$category].Count + $config.settings.dynamic_start_index
     $newId = "$prefix$index"
-    $DynamicMap[$value] = $newId
+
+    $DynamicMap[$category][$value] = $newId
     return $newId
 }
 
-# ============================
-#  Función: Anonimizar nombre de fichero
-# ============================
 function Anonymize-FileName {
-    param([string]$fileName, $config, $DynamicMap)
+    param($fileName, $config, $DynamicMap)
 
-    # Detectar extensión principal
+    $name = [System.IO.Path]::GetFileNameWithoutExtension($fileName)
     $ext = [System.IO.Path]::GetExtension($fileName)
 
-    # Detectar extensiones encadenadas (ej: .txt.log)
-    if ($fileName -match "^(.+?)(\.[A-Za-z0-9]+)+$") {
-        $base = $matches[1]
-        $extensions = $fileName.Substring($base.Length)
-    } else {
-        $base = [System.IO.Path]::GetFileNameWithoutExtension($fileName)
-        $extensions = $ext
-    }
-
-    $anon = Get-DynamicId -value $fileName -category "file_name" -config $config -DynamicMap $DynamicMap
-
-    return "$anon$extensions"
+    $newName = Get-DynamicId -category "file_name" -value $name -config $config -DynamicMap $DynamicMap
+    return "$newName$ext"
 }
 
-# ============================
-#  Función: Anonimizar rutas
-# ============================
 function Anonymize-Path {
-    param([string]$fullPath)
+    param($path, $config, $DynamicMap)
 
-    $path = $fullPath -replace "\\", "/"
+    $parts = $path -split "[/\\]"
+    $anonParts = @()
 
-    $parts = $path -split "/"
-    $file = $parts[-1]
-    $folders = $parts[0..($parts.Count - 2)]
-
-    $anonFile = Anonymize-FileName -fileName $file -config $config -DynamicMap $DynamicMap
-
-    $anonFolders = $folders | ForEach-Object {
-        if ($_ -match "^[A-Za-z]:$") {
-            return $_.Substring(0,1).ToLower()
+    foreach ($p in $parts) {
+        if ($p -match "\.") {
+            $anonParts += Anonymize-FileName -fileName $p -config $config -DynamicMap $DynamicMap
         } else {
-            return $_.Substring(0,1).ToLower()
+            $anonParts += Get-DynamicId -category "file_name" -value $p -config $config -DynamicMap $DynamicMap
         }
     }
 
-    $anonPath = ($anonFolders -join "\") + "\" + $anonFile
-    return $anonPath
+    return ($anonParts -join "\")
 }
 
-# ============================
-#  Función: Reemplazos fijos
-# ============================
 function Apply-FixedReplacements {
     param($text, $config)
 
     foreach ($category in $config.fixed_replacements.PSObject.Properties.Name) {
         foreach ($rule in $config.fixed_replacements.$category) {
-
-            if (-not $rule.enabled) { continue }
-
-            $pattern = [regex]::Escape($rule.match)
-
-            if ($config.settings.whole_word_only) {
-                $pattern = "\b$pattern\b"
+            if ($rule.enabled) {
+                $text = $text -replace [regex]::Escape($rule.match), $rule.replace
             }
-
-            $text = [regex]::Replace(
-                $text,
-                $pattern,
-                $rule.replace,
-                "IgnoreCase"
-            )
         }
     }
-
     return $text
 }
 
-# ============================
-#  Función: Regex fijos
-# ============================
 function Apply-FixedRegex {
     param($text, $config)
 
     foreach ($category in $config.regex_rules_fixed.PSObject.Properties.Name) {
         foreach ($rule in $config.regex_rules_fixed.$category) {
-
-            if (-not $rule.enabled) { continue }
-
-            $text = [regex]::Replace(
-                $text,
-                $rule.pattern,
-                $rule.replace,
-                "IgnoreCase"
-            )
+            if ($rule.enabled) {
+                $text = $text -replace $rule.pattern, $rule.replace
+            }
         }
     }
-
     return $text
 }
 
-# ============================
-#  Función: Reemplazos dinámicos
-# ============================
 function Apply-DynamicReplacements {
     param($text, $config, $DynamicMap)
 
     foreach ($category in $config.dynamic_replacements.PSObject.Properties.Name) {
         foreach ($rule in $config.dynamic_replacements.$category) {
-
-            if (-not $rule.enabled) { continue }
-
-            $pattern = [regex]::Escape($rule.match)
-
-            if ($config.settings.whole_word_only) {
-                $pattern = "\b$pattern\b"
+            if ($rule.enabled) {
+                $id = Get-DynamicId -category $category -value $rule.match -config $config -DynamicMap $DynamicMap
+                $text = $text -replace [regex]::Escape($rule.match), $id
             }
-
-            $replacement = Get-DynamicId -value $rule.match -category $category -config $config -DynamicMap $DynamicMap
-
-            $text = [regex]::Replace(
-                $text,
-                $pattern,
-                $replacement,
-                "IgnoreCase"
-            )
         }
     }
-
     return $text
 }
 
-# ============================
-#  Función: Regex dinámicos
-# ============================
 function Apply-DynamicRegex {
     param($text, $config, $DynamicMap)
 
     foreach ($category in $config.regex_rules_dynamic.PSObject.Properties.Name) {
         foreach ($rule in $config.regex_rules_dynamic.$category) {
-
-            if (-not $rule.enabled) { continue }
-
-            if ($category -eq "file_path") {
-                $text = [regex]::Replace(
-                    $text,
-                    $rule.pattern,
-                    {
-                        param($match)
-                        Anonymize-Path $match.Value
-                    },
-                    "IgnoreCase"
-                )
-            }
-            elseif ($category -eq "file_name") {
-                $text = [regex]::Replace(
-                    $text,
-                    $rule.pattern,
-                    {
-                        param($match)
-                        Anonymize-FileName $match.Value -config $config -DynamicMap $DynamicMap
-                    },
-                    "IgnoreCase"
-                )
-            }
-            else {
-                $text = [regex]::Replace(
-                    $text,
-                    $rule.pattern,
-                    {
-                        param($match)
-                        Get-DynamicId -value $match.Value -category $category -config $config -DynamicMap $DynamicMap
-                    },
-                    "IgnoreCase"
-                )
+            if ($rule.enabled) {
+                $text = [regex]::Replace($text, $rule.pattern, {
+                    param($m)
+                    Get-DynamicId -category $category -value $m.Value -config $config -DynamicMap $DynamicMap
+                })
             }
         }
     }
-
     return $text
 }
 
-# ============================
-#  Función: Anonimizar texto (LOTE)
-# ============================
 function Anonymize-Text {
     param($text, $config, $DynamicMap)
 
@@ -341,53 +241,44 @@ function Anonymize-Text {
     return $text
 }
 
-# ============================
-#  Función: Procesar archivo completo
-# ============================
 function Anonymize-File {
-    param(
-        [string]$filePath,
-        $config,
-        $DynamicMap
-    )
-
-    Write-Host "Procesando archivo: $filePath"
+    param($filePath, $config, $DynamicMap)
 
     $content = Get-Content $filePath -Raw
-    $result = Anonymize-Text -text $content -config $config -DynamicMap $DynamicMap
+    $anon = Anonymize-Text -text $content -config $config -DynamicMap $DynamicMap
 
-    # Crear carpeta anonymized
-    $folder = Split-Path $filePath
-    $anonFolder = Join-Path $folder "anonymized"
+    $outFolder = Join-Path (Split-Path $filePath) "anonymized"
+    if (-not (Test-Path $outFolder)) { New-Item -ItemType Directory -Path $outFolder | Out-Null }
 
-    if (-not (Test-Path $anonFolder)) {
-        New-Item -ItemType Directory -Path $anonFolder | Out-Null
-    }
-
-    $fileName = Split-Path $filePath -Leaf
-    $outputPath = Join-Path $anonFolder "$fileName.anonymized.txt"
-
-    $result | Set-Content $outputPath -Encoding UTF8
-
-    Write-Host " → Archivo generado: $outputPath"
+    $outFile = Join-Path $outFolder ("$(Split-Path $filePath -Leaf).anonymized.txt")
+    Set-Content -Path $outFile -Value $anon
 }
 
-# ============================
-#  Función: Procesar carpeta completa
-# ============================
 function Anonymize-Folder {
-    param(
-        [string]$folderPath,
-        $config,
-        $DynamicMap
-    )
+    param($folderPath, $config, $DynamicMap)
 
-    $files = Get-ChildItem -Path $folderPath -File
-
-    foreach ($file in $files) {
-        Anonymize-File -filePath $file.FullName -config $config -DynamicMap $DynamicMap
+    $files = Get-ChildItem -Path $folderPath -File -Recurse
+    foreach ($f in $files) {
+        Anonymize-File -filePath $f.FullName -config $config -DynamicMap $DynamicMap
     }
 }
+
+# ============================
+#  EJECUCIÓN AUTOMÁTICA
+# ============================
+
+if (Test-Path $Path -PathType Container) {
+    Write-Host "Anonimizando carpeta: $Path"
+    Anonymize-Folder -folderPath $Path -config $config -DynamicMap $DynamicMap
+}
+elseif (Test-Path $Path -PathType Leaf) {
+    Write-Host "Anonimizando archivo: $Path"
+    Anonymize-File -filePath $Path -config $config -DynamicMap $DynamicMap
+}
+else {
+    Write-Host "ERROR: La ruta no existe: $Path"
+}
+
 ```
 
 ## copia-segura_v4.1.ps1
