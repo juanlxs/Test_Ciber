@@ -305,14 +305,15 @@ function Get-AnonymizedDiskNameFromContent {
 
     foreach ($ext in $config.settings.sensitive_disk_extensions) {
 
-        # Detecta tanto:
+        # Detecta:
         # - anon_file8.vhdx
         # - C:\anon\anon\anon_file8.vhdx
-        # - /anon/anon/anon_file8.vhdx
-        # - "algo/anon_file8.vhdx"
-        # - "anon_file8.vhdx" suelto
+        # - /mnt/anon/anon_file8.vhdx
+        # - "anon_file8.vhdx"
+        # - anon_file8.vhdx.log
+        # - cualquier variante
 
-        $regex = "([A-Za-z0-9._-]+)\.$ext"
+        $regex = "([A-Za-z0-9._-]+)\.$ext(?![A-Za-z0-9])"
 
         $match = [regex]::Match($content, $regex)
 
@@ -359,16 +360,16 @@ function Anonymize-File {
     #  REGLA DE RENOMBRADO
     # ============================
 
-    if ($name -match "\.(vhdx|vhd|vmdk|iso|tib|tibx)\.log$") {
+    if ($name -match "^(.+)\.(vhdx|vhd|vmdk|iso|tib|tibx)\.log$") {
 
-        $diskAnon = Get-AnonymizedDiskNameFromContent -content $anon -config $config
+        # Nombre original del disco sin .log
+        $originalDisk = "$($matches[1]).$($matches[2])"
 
-        if ($diskAnon) {
-            $outName = "$diskAnon.log"
-        }
-        else {
-            $outName = $name
-        }
+        # Obtener el MISMO ID dinámico que se usó en Application.log
+        $anonDisk = Get-DynamicId -category "file" -value $originalDisk -config $config -DynamicMap $DynamicMap
+
+        # Nombre final del fichero físico
+        $outName = "$anonDisk.$($matches[2]).log"
     }
     else {
         $outName = $name
@@ -406,6 +407,7 @@ elseif (Test-Path $Path -PathType Leaf) {
 else {
     Write-Host "ERROR: La ruta no existe: $Path"
 }
+
 ```
 
 ## copia-segura_v4.1.ps1
