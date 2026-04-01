@@ -6,10 +6,8 @@
     "settings": {
         "case_sensitive": false,
         "whole_word_only": true,
-
         "dynamic_ids_enabled": true,
         "dynamic_start_index": 1,
-
         "dynamic_prefixes": {
             "personal_name": "usuario",
             "company": "empresa",
@@ -92,16 +90,18 @@
                 "priority": 1
             }
         ],
+
         "file_path": [
             {
-                "pattern": "([A-Za-z]:\\\\\\\`\(?:[^\\\\\\\\\\\\r\\\\n]+\\\\\\\\)`*[^\\\\\\\\\\\\r\\\\n]+)|(?:\\/(?:[^\\/\\\\r\\\\n]+\\/)*[^\\/\\\\r\\\\n]+)",
+                "pattern": "(?:[A-Za-z]:\\\\[^\\\\\\r\\n]+(?:\\\\[^\\\\\\r\\n]+)*)|(?:\\/[^\n\\/\\r]+(?:\\/[^\n\\/\\r]+)*)",
                 "enabled": true,
                 "priority": 1
             }
         ],
+
         "file_name": [
             {
-                "pattern": "(?<=\\/|\\\\\\\\)[^\\/\\\\\\\\]+\\.[A-Za-z0-9]+",
+                "pattern": "(?:^|[\\\\\\/])([^\\\\\\/]+\\.[A-Za-z0-9]+)",
                 "enabled": true,
                 "priority": 1
             }
