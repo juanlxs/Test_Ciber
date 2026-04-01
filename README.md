@@ -61,11 +61,23 @@
         "date_eu": [
             { "pattern": "\\b\\d{2}\\/\\d{2}\\/\\d{4}\\b", "replace": "DATE-REDACTED", "enabled": true, "priority": 1 }
         ],
+
         "date_eu_time": [
-            { "pattern": "\\b\\d{2}\\/\\d{2}\\/\\d{4}\\s+\\d{2}:\\d{2}:\\d{2}\\b", "replace": "DATE-TIME-REDACTED", "enabled": true, "priority": 1 }
+            { 
+                "pattern": "\\b\\d{2}\\/\\d{2}\\/\\d{4}(?:\\s+\\d{2}:\\d{2}:\\d{2})?", 
+                "replace": "DATE-TIME-REDACTED", 
+                "enabled": true, 
+                "priority": 1 
+            }
         ],
+
         "last_modified": [
-            { "pattern": "LAST MODIFIED:\\s*\\d{2}\\/\\d{2}\\/\\d{4}\\s+\\d{2}:\\d{2}:\\d{2}", "replace": "LAST MODIFIED: CENSORED_DATE", "enabled": true, "priority": 1 }
+            { 
+                "pattern": "LAST MODIFIED:\\s*\\d{2}\\/\\d{2}\\/\\d{4}\\s+\\d{2}:\\d{2}:\\d{2}", 
+                "replace": "LAST MODIFIED: CENSORED_DATE_TIME", 
+                "enabled": true, 
+                "priority": 1 
+            }
         ]
     },
 
@@ -84,6 +96,7 @@
         ]
     }
 }
+
 ```
 
 ## ps1
