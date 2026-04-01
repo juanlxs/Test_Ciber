@@ -5,7 +5,7 @@
 {
     "settings": {
         "case_sensitive": false,
-        "whole_word_only": true,
+        "whole_word_only": false,
         "dynamic_ids_enabled": true,
         "dynamic_start_index": 1,
         "dynamic_prefixes": {
@@ -14,7 +14,8 @@
             "server": "srv",
             "email": "mail",
             "project": "proyecto",
-            "file_name": "fichero"
+            "file": "fichero",
+            "disk_file": "file"
         }
     },
 
@@ -37,7 +38,8 @@
         "server": [
             { "match": "Servidor01", "enabled": true, "priority": 1 },
             { "match": "Servidor02", "enabled": true, "priority": 1 }
-        ]
+        ],
+        "disk_file": []
     },
 
     "regex_rules_fixed": {
@@ -72,6 +74,22 @@
                 "enabled": true,
                 "priority": 1
             }
+        ],
+        "date_eu": [
+            {
+                "pattern": "\\b\\d{2}\\/\\d{2}\\/\\d{4}\\b",
+                "replace": "DATE-REDACTED",
+                "enabled": true,
+                "priority": 1
+            }
+        ],
+        "date_eu_time": [
+            {
+                "pattern": "\\b\\d{2}\\/\\d{2}\\/\\d{4}\\s+\\d{2}:\\d{2}:\\d{2}\\b",
+                "replace": "DATE-TIME-REDACTED",
+                "enabled": true,
+                "priority": 1
+            }
         ]
     },
 
@@ -90,25 +108,15 @@
                 "priority": 1
             }
         ],
-
         "file_path": [
             {
                 "pattern": "(?:[A-Za-z]:\\\\[^\\\\\\r\\n]+(?:\\\\[^\\\\\\r\\n]+)*)|(?:\\/[^\n\\/\\r]+(?:\\/[^\n\\/\\r]+)*)",
                 "enabled": true,
                 "priority": 1
             }
-        ],
-
-        "file_name": [
-            {
-                "pattern": "(?:^|[\\\\\\/])([^\\\\\\/]+\\.[A-Za-z0-9]+)",
-                "enabled": true,
-                "priority": 1
-            }
         ]
     }
 }
-
 ```
 
 ## ps1
@@ -125,7 +133,7 @@ $config = Get-Content "$PSScriptRoot\config.json" -Raw | ConvertFrom-Json
 $DynamicMap = @{}
 
 # ============================
-#  FUNCIONES
+#  FUNCIONES BASE
 # ============================
 
 function Get-DynamicId {
@@ -184,22 +192,32 @@ function Anonymize-PathInText {
         if ($d -ne "") { $anonDirs += "anon" }
     }
 
-    # Extensiones de disco sensibles
-    $diskExts = @(".vhdx", ".iso", ".tib", ".tibx", ".vhd", ".vmdk")
+    # Extensiones sensibles
+    $diskExts = @("vhdx","iso","tib","tibx","vhd","vmdk")
 
-    $fileExt = [System.IO.Path]::GetExtension($file)
+    # Detectar doble extensión: nombre.ext.log
+    if ($file -match "^(?<diskName>.+)\.(?<diskExt>vhdx|iso|tib|tibx|vhd|vmdk)\.log$") {
 
-    if ($diskExts -contains $fileExt) {
-        # Es un disco → anonimizar
-        $file = Get-AnonymizedDiskName -originalName $file -config $config -DynamicMap $DynamicMap
+        $diskName = $matches["diskName"] + "." + $matches["diskExt"]
+
+        $anonDisk = Get-AnonymizedDiskName -originalName $diskName -config $config -DynamicMap $DynamicMap
+
+        $file = "$anonDisk.log"
     }
     else {
-        # Fichero normal → anon_fileX.ext
-        $id = Get-DynamicId -category "file" -value $file -config $config -DynamicMap $DynamicMap
-        $file = "anon_file${id}$fileExt"
+        # Fichero normal → anon_fileX.ext (robusto)
+        $ext = ""
+        if ($file -match "\.(?<ext>[A-Za-z0-9]+)$") {
+            $ext = "." + $matches["ext"]
+        }
+
+        $id  = Get-DynamicId -category "file" -value $file -config $config -DynamicMap $DynamicMap
+        $file = "anon_file${id}$ext"
     }
 
-    $sep = ($path -match "/") ? "/" : "\"
+    $sep = "\"
+    if ($path.Contains("/")) { $sep = "/" }
+
     return ($anonDirs + $file) -join $sep
 }
 
@@ -216,18 +234,15 @@ function Get-AnonymizedLogFileName {
 
     $name = [System.IO.Path]::GetFileName($filePath)
 
-    # Detectar logs sensibles: Fichero_pepe.vhdx.log
-    if ($name -match "^(?<diskName>.+\.(vhdx|iso|tib|tibx|vhd|vmdk))\.log$") {
+    if ($name -match "^(?<diskName>.+)\.(?<diskExt>vhdx|iso|tib|tibx|vhd|vmdk)\.log$") {
 
-        $diskName = $matches["diskName"]  # Fichero_pepe.vhdx
+        $diskName = $matches["diskName"] + "." + $matches["diskExt"]
 
-        # Obtener el nombre anonimizado del disco
         $anonDiskName = Get-AnonymizedDiskName -originalName $diskName -config $config -DynamicMap $DynamicMap
 
         return "$anonDiskName.log"
     }
 
-    # Logs normales → se mantienen igual
     return $name
 }
 
@@ -283,7 +298,6 @@ function Apply-DynamicRegex {
 
             if (-not $rule.enabled) { continue }
 
-            # Rutas → usar Anonymize-PathInText
             if ($category -eq "file_path") {
                 $text = [regex]::Replace($text, $rule.pattern, {
                     param($m)
@@ -292,7 +306,6 @@ function Apply-DynamicRegex {
                 continue
             }
 
-            # Otros dinámicos → IDs
             $text = [regex]::Replace($text, $rule.pattern, {
                 param($m)
                 Get-DynamicId -category $category -value $m.Value -config $config -DynamicMap $DynamicMap
@@ -356,7 +369,6 @@ elseif (Test-Path $Path -PathType Leaf) {
 else {
     Write-Host "ERROR: La ruta no existe: $Path"
 }
-
 ```
 
 ## copia-segura_v4.1.ps1
