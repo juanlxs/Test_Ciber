@@ -144,32 +144,96 @@ function Get-DynamicId {
     return $index
 }
 
-function Anonymize-FileName {
-    param($fileName, $config, $DynamicMap)
+# ============================
+#  ANONIMIZAR NOMBRES DE DISCOS
+# ============================
 
-    $ext = [System.IO.Path]::GetExtension($fileName)
-    $id = Get-DynamicId -category "file" -value $fileName -config $config -DynamicMap $DynamicMap
-    return "anon_file$id$ext"
+function Get-AnonymizedDiskName {
+    param(
+        [string]$originalName,
+        $config,
+        $DynamicMap
+    )
+
+    $id  = Get-DynamicId -category "disk_file" -value $originalName -config $config -DynamicMap $DynamicMap
+    $ext = [System.IO.Path]::GetExtension($originalName)
+
+    return "file${id}_anon$ext"
 }
 
-function Anonymize-Path {
-    param($path, $config, $DynamicMap)
+# ============================
+#  ANONIMIZAR RUTAS DENTRO DEL CONTENIDO
+# ============================
+
+function Anonymize-PathInText {
+    param(
+        [string]$path,
+        $config,
+        $DynamicMap
+    )
 
     $parts = $path -split "[/\\]"
-    $anonParts = @()
+    if ($parts.Count -eq 0) { return $path }
 
-    foreach ($p in $parts) {
+    $dirs = $parts[0..($parts.Count - 2)]
+    $file = $parts[-1]
 
-        if ($p -match "\.") {
-            $anonParts += Anonymize-FileName -fileName $p -config $config -DynamicMap $DynamicMap
-        }
-        else {
-            $anonParts += "anon"
-        }
+    # Directorios → anon
+    $anonDirs = @()
+    foreach ($d in $dirs) {
+        if ($d -ne "") { $anonDirs += "anon" }
     }
 
-    return ($anonParts -join "\")
+    # Extensiones de disco sensibles
+    $diskExts = @(".vhdx", ".iso", ".tib", ".tibx", ".vhd", ".vmdk")
+
+    $fileExt = [System.IO.Path]::GetExtension($file)
+
+    if ($diskExts -contains $fileExt) {
+        # Es un disco → anonimizar
+        $file = Get-AnonymizedDiskName -originalName $file -config $config -DynamicMap $DynamicMap
+    }
+    else {
+        # Fichero normal → anon_fileX.ext
+        $id = Get-DynamicId -category "file" -value $file -config $config -DynamicMap $DynamicMap
+        $file = "anon_file${id}$fileExt"
+    }
+
+    $sep = ($path -match "/") ? "/" : "\"
+    return ($anonDirs + $file) -join $sep
 }
+
+# ============================
+#  ANONIMIZAR NOMBRE DE FICHEROS .LOG FÍSICOS
+# ============================
+
+function Get-AnonymizedLogFileName {
+    param(
+        [string]$filePath,
+        $config,
+        $DynamicMap
+    )
+
+    $name = [System.IO.Path]::GetFileName($filePath)
+
+    # Detectar logs sensibles: Fichero_pepe.vhdx.log
+    if ($name -match "^(?<diskName>.+\.(vhdx|iso|tib|tibx|vhd|vmdk))\.log$") {
+
+        $diskName = $matches["diskName"]  # Fichero_pepe.vhdx
+
+        # Obtener el nombre anonimizado del disco
+        $anonDiskName = Get-AnonymizedDiskName -originalName $diskName -config $config -DynamicMap $DynamicMap
+
+        return "$anonDiskName.log"
+    }
+
+    # Logs normales → se mantienen igual
+    return $name
+}
+
+# ============================
+#  APLICAR REGLAS DE CONTENIDO
+# ============================
 
 function Apply-FixedReplacements {
     param($text, $config)
@@ -219,11 +283,11 @@ function Apply-DynamicRegex {
 
             if (-not $rule.enabled) { continue }
 
-            # RUTAS → usar Anonymize-Path
+            # Rutas → usar Anonymize-PathInText
             if ($category -eq "file_path") {
                 $text = [regex]::Replace($text, $rule.pattern, {
                     param($m)
-                    Anonymize-Path -path $m.Value -config $config -DynamicMap $DynamicMap
+                    Anonymize-PathInText -path $m.Value -config $config -DynamicMap $DynamicMap
                 })
                 continue
             }
@@ -249,17 +313,21 @@ function Anonymize-Text {
     return $text
 }
 
+# ============================
+#  PROCESAR ARCHIVOS
+# ============================
+
 function Anonymize-File {
     param($filePath, $config, $DynamicMap)
 
     $content = Get-Content $filePath -Raw
-    $anon = Anonymize-Text -text $content -config $config -DynamicMap $DynamicMap
+    $anon    = Anonymize-Text -text $content -config $config -DynamicMap $DynamicMap
 
     $outFolder = Join-Path (Split-Path $filePath) "anonymized"
     if (-not (Test-Path $outFolder)) { New-Item -ItemType Directory -Path $outFolder | Out-Null }
 
-    $anonName = Anonymize-FileName -fileName (Split-Path $filePath -Leaf) -config $config -DynamicMap $DynamicMap
-    $outFile = Join-Path $outFolder $anonName
+    $anonName = Get-AnonymizedLogFileName -filePath $filePath -config $config -DynamicMap $DynamicMap
+    $outFile  = Join-Path $outFolder $anonName
 
     Set-Content -Path $outFile -Value $anon
 }
@@ -274,7 +342,7 @@ function Anonymize-Folder {
 }
 
 # ============================
-#  EJECUCIÓN AUTOMÁTICA
+#  EJECUCIÓN
 # ============================
 
 if (Test-Path $Path -PathType Container) {
