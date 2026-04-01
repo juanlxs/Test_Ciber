@@ -150,10 +150,21 @@ function Get-DynamicId {
 function Anonymize-FileName {
     param([string]$fileName, $config, $DynamicMap)
 
+    # Detectar extensión principal
     $ext = [System.IO.Path]::GetExtension($fileName)
+
+    # Detectar extensiones encadenadas (ej: .txt.log)
+    if ($fileName -match "^(.+?)(\.[A-Za-z0-9]+)+$") {
+        $base = $matches[1]
+        $extensions = $fileName.Substring($base.Length)
+    } else {
+        $base = [System.IO.Path]::GetFileNameWithoutExtension($fileName)
+        $extensions = $ext
+    }
+
     $anon = Get-DynamicId -value $fileName -category "file_name" -config $config -DynamicMap $DynamicMap
 
-    return "$anon$ext"
+    return "$anon$extensions"
 }
 
 # ============================
@@ -344,7 +355,17 @@ function Anonymize-File {
     $content = Get-Content $filePath -Raw
     $result = Anonymize-Text -text $content -config $config -DynamicMap $DynamicMap
 
-    $outputPath = "$filePath.anonymized.txt"
+    # Crear carpeta anonymized
+    $folder = Split-Path $filePath
+    $anonFolder = Join-Path $folder "anonymized"
+
+    if (-not (Test-Path $anonFolder)) {
+        New-Item -ItemType Directory -Path $anonFolder | Out-Null
+    }
+
+    $fileName = Split-Path $filePath -Leaf
+    $outputPath = Join-Path $anonFolder "$fileName.anonymized.txt"
+
     $result | Set-Content $outputPath -Encoding UTF8
 
     Write-Host " → Archivo generado: $outputPath"
@@ -366,7 +387,6 @@ function Anonymize-Folder {
         Anonymize-File -filePath $file.FullName -config $config -DynamicMap $DynamicMap
     }
 }
-
 ```
 
 ## copia-segura_v4.1.ps1
