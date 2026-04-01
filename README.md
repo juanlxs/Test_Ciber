@@ -304,7 +304,16 @@ function Get-AnonymizedDiskNameFromContent {
     param($content, $config)
 
     foreach ($ext in $config.settings.sensitive_disk_extensions) {
-        $regex = "\b([A-Za-z0-9._-]+)\.$ext\b"
+
+        # Detecta tanto:
+        # - anon_file8.vhdx
+        # - C:\anon\anon\anon_file8.vhdx
+        # - /anon/anon/anon_file8.vhdx
+        # - "algo/anon_file8.vhdx"
+        # - "anon_file8.vhdx" suelto
+
+        $regex = "([A-Za-z0-9._-]+)\.$ext"
+
         $match = [regex]::Match($content, $regex)
 
         if ($match.Success) {
@@ -397,8 +406,6 @@ elseif (Test-Path $Path -PathType Leaf) {
 else {
     Write-Host "ERROR: La ruta no existe: $Path"
 }
-
-
 ```
 
 ## copia-segura_v4.1.ps1
