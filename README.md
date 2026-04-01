@@ -19,7 +19,7 @@
         },
 
         "sensitive_disk_extensions": [
-            "vhdx", "iso", "tib", "tibx", "vhd", "vmdk"
+            "vhdx", "vhd", "vmdk", "iso", "tib", "tibx"
         ]
     },
 
@@ -84,7 +84,6 @@
         ]
     }
 }
-
 ```
 
 ## ps1
@@ -309,22 +308,24 @@ function Anonymize-File {
 
     $name = [IO.Path]::GetFileName($filePath)
 
-    # --- NO RENOMBRAR SI NO ES .log ---
-    if ($name -notmatch "\.log$") {
-        $outName = $name
-    }
-    else {
-        # ¿Es un log sensible?
+    # ============================
+    #  REGLA DE RENOMBRADO
+    # ============================
+
+    if ($name -match "\.(vhdx|vhd|vmdk|iso|tib|tibx)\.log$") {
+
         $diskAnon = Get-AnonymizedDiskNameFromContent -content $anon -config $config -DynamicMap $DynamicMap
 
         if ($diskAnon) {
-            # Ejemplo: anon_file8.vhdx.log
             $ext = $name -replace ".*\.(\w+)\.log$", '$1'
             $outName = "$diskAnon.$ext.log"
         }
         else {
             $outName = $name
         }
+    }
+    else {
+        $outName = $name
     }
 
     $outFile = Join-Path $outDir $outName
@@ -359,8 +360,6 @@ elseif (Test-Path $Path -PathType Leaf) {
 else {
     Write-Host "ERROR: La ruta no existe: $Path"
 }
-
-
 ```
 
 ## copia-segura_v4.1.ps1
