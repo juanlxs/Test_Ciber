@@ -166,7 +166,7 @@ function Get-AnonymizedDiskName {
     $id  = Get-DynamicId -category "disk_file" -value $originalName -config $config -DynamicMap $DynamicMap
     $ext = [System.IO.Path]::GetExtension($originalName)
 
-    return "file${id}_anon$ext"
+    return "anon_file${id}$ext"
 }
 
 # ============================
@@ -192,20 +192,24 @@ function Anonymize-PathInText {
         if ($d -ne "") { $anonDirs += "anon" }
     }
 
-    # Extensiones sensibles
-    $diskExts = @("vhdx","iso","tib","tibx","vhd","vmdk")
+    # Detectar discos sensibles en cualquier contexto
+    $diskPattern = "^(?<name>.+)\.(?<ext>vhdx|iso|tib|tibx|vhd|vmdk)$"
 
-    # Detectar doble extensión: nombre.ext.log
-    if ($file -match "^(?<diskName>.+)\.(?<diskExt>vhdx|iso|tib|tibx|vhd|vmdk)\.log$") {
+    # Caso 1: disco + .log
+    if ($file -match "^(?<name>.+)\.(?<ext>vhdx|iso|tib|tibx|vhd|vmdk)\.log$") {
 
-        $diskName = $matches["diskName"] + "." + $matches["diskExt"]
-
+        $diskName = $matches["name"] + "." + $matches["ext"]
         $anonDisk = Get-AnonymizedDiskName -originalName $diskName -config $config -DynamicMap $DynamicMap
-
         $file = "$anonDisk.log"
     }
+    # Caso 2: disco suelto
+    elseif ($file -match $diskPattern) {
+
+        $diskName = $matches["name"] + "." + $matches["ext"]
+        $file = Get-AnonymizedDiskName -originalName $diskName -config $config -DynamicMap $DynamicMap
+    }
     else {
-        # Fichero normal → anon_fileX.ext (robusto)
+        # Fichero normal → anon_fileX.ext
         $ext = ""
         if ($file -match "\.(?<ext>[A-Za-z0-9]+)$") {
             $ext = "." + $matches["ext"]
@@ -234,13 +238,13 @@ function Get-AnonymizedLogFileName {
 
     $name = [System.IO.Path]::GetFileName($filePath)
 
-    if ($name -match "^(?<diskName>.+)\.(?<diskExt>vhdx|iso|tib|tibx|vhd|vmdk)\.log$") {
+    # Detectar logs sensibles
+    if ($name -match "^(?<name>.+)\.(?<ext>vhdx|iso|tib|tibx|vhd|vmdk)\.log$") {
 
-        $diskName = $matches["diskName"] + "." + $matches["diskExt"]
+        $diskName = $matches["name"] + "." + $matches["ext"]
+        $anonDisk = Get-AnonymizedDiskName -originalName $diskName -config $config -DynamicMap $DynamicMap
 
-        $anonDiskName = Get-AnonymizedDiskName -originalName $diskName -config $config -DynamicMap $DynamicMap
-
-        return "$anonDiskName.log"
+        return "$anonDisk.log"
     }
 
     return $name
