@@ -139,22 +139,17 @@ function Get-DynamicId {
         return $DynamicMap[$category][$value]
     }
 
-    $prefix = $config.settings.dynamic_prefixes.$category
-    $index = $DynamicMap[$category].Count + $config.settings.dynamic_start_index
-    $newId = "$prefix$index"
-
-    $DynamicMap[$category][$value] = $newId
-    return $newId
+    $index = $DynamicMap[$category].Count + 1
+    $DynamicMap[$category][$value] = $index
+    return $index
 }
 
 function Anonymize-FileName {
     param($fileName, $config, $DynamicMap)
 
-    $name = [System.IO.Path]::GetFileNameWithoutExtension($fileName)
     $ext = [System.IO.Path]::GetExtension($fileName)
-
-    $newName = Get-DynamicId -category "file_name" -value $name -config $config -DynamicMap $DynamicMap
-    return "$newName$ext"
+    $id = Get-DynamicId -category "file" -value $fileName -config $config -DynamicMap $DynamicMap
+    return "anon_file$id$ext"
 }
 
 function Anonymize-Path {
@@ -164,10 +159,12 @@ function Anonymize-Path {
     $anonParts = @()
 
     foreach ($p in $parts) {
+
         if ($p -match "\.") {
             $anonParts += Anonymize-FileName -fileName $p -config $config -DynamicMap $DynamicMap
-        } else {
-            $anonParts += Get-DynamicId -category "file_name" -value $p -config $config -DynamicMap $DynamicMap
+        }
+        else {
+            $anonParts += "anon"
         }
     }
 
@@ -219,12 +216,23 @@ function Apply-DynamicRegex {
 
     foreach ($category in $config.regex_rules_dynamic.PSObject.Properties.Name) {
         foreach ($rule in $config.regex_rules_dynamic.$category) {
-            if ($rule.enabled) {
+
+            if (-not $rule.enabled) { continue }
+
+            # RUTAS → usar Anonymize-Path
+            if ($category -eq "file_path") {
                 $text = [regex]::Replace($text, $rule.pattern, {
                     param($m)
-                    Get-DynamicId -category $category -value $m.Value -config $config -DynamicMap $DynamicMap
+                    Anonymize-Path -path $m.Value -config $config -DynamicMap $DynamicMap
                 })
+                continue
             }
+
+            # Otros dinámicos → IDs
+            $text = [regex]::Replace($text, $rule.pattern, {
+                param($m)
+                Get-DynamicId -category $category -value $m.Value -config $config -DynamicMap $DynamicMap
+            })
         }
     }
     return $text
@@ -250,7 +258,9 @@ function Anonymize-File {
     $outFolder = Join-Path (Split-Path $filePath) "anonymized"
     if (-not (Test-Path $outFolder)) { New-Item -ItemType Directory -Path $outFolder | Out-Null }
 
-    $outFile = Join-Path $outFolder ("$(Split-Path $filePath -Leaf).anonymized.txt")
+    $anonName = Anonymize-FileName -fileName (Split-Path $filePath -Leaf) -config $config -DynamicMap $DynamicMap
+    $outFile = Join-Path $outFolder $anonName
+
     Set-Content -Path $outFile -Value $anon
 }
 
