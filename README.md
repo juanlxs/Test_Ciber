@@ -14,8 +14,7 @@
             "server": "srv",
             "email": "mail",
             "project": "proyecto",
-            "file": "fichero",
-            "disk_file": "file"
+            "file": "anon_file"
         }
     },
 
@@ -39,7 +38,9 @@
             { "match": "Servidor01", "enabled": true, "priority": 1 },
             { "match": "Servidor02", "enabled": true, "priority": 1 }
         ],
-        "disk_file": []
+        "email": [],
+        "project": [],
+        "file": []
     },
 
     "regex_rules_fixed": {
@@ -62,15 +63,7 @@
         "sha256": [
             {
                 "pattern": "\\b[A-Fa-f0-9]{64}\\b",
-                "replace": "CENSURED",
-                "enabled": true,
-                "priority": 1
-            }
-        ],
-        "last_modified": [
-            {
-                "pattern": "LAST MODIFIED:\\s*\\d{2}\\/\\d{2}\\/\\d{4}\\s+\\d{2}:\\d{2}:\\d{2}",
-                "replace": "LAST MODIFIED: CENSURED_DATE",
+                "replace": "CENSORED-HASH",
                 "enabled": true,
                 "priority": 1
             }
@@ -90,13 +83,21 @@
                 "enabled": true,
                 "priority": 1
             }
+        ],
+        "last_modified": [
+            {
+                "pattern": "LAST MODIFIED:\\s*\\d{2}\\/\\d{2}\\/\\d{4}\\s+\\d{2}:\\d{2}:\\d{2}",
+                "replace": "LAST MODIFIED: CENSORED_DATE",
+                "enabled": true,
+                "priority": 1
+            }
         ]
     },
 
     "regex_rules_dynamic": {
         "email": [
             {
-                "pattern": "[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}",
+                "pattern": "[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[A-Za-z]{2,}",
                 "enabled": true,
                 "priority": 1
             }
@@ -111,6 +112,13 @@
         "file_path": [
             {
                 "pattern": "(?:[A-Za-z]:\\\\[^\\\\\\r\\n]+(?:\\\\[^\\\\\\r\\n]+)*)|(?:\\/[^\n\\/\\r]+(?:\\/[^\n\\/\\r]+)*)",
+                "enabled": true,
+                "priority": 1
+            }
+        ],
+        "file_name": [
+            {
+                "pattern": "\\b([A-Za-z0-9._-]+\\.[A-Za-z0-9]+)\\b",
                 "enabled": true,
                 "priority": 1
             }
@@ -153,31 +161,12 @@ function Get-DynamicId {
 }
 
 # ============================
-#  ANONIMIZAR NOMBRES DE DISCOS
-# ============================
-
-function Get-AnonymizedDiskName {
-    param(
-        [string]$originalName,
-        $config,
-        $DynamicMap
-    )
-
-    $id  = Get-DynamicId -category "disk_file" -value $originalName -config $config -DynamicMap $DynamicMap
-    $ext = [System.IO.Path]::GetExtension($originalName)
-
-    return "anon_file${id}$ext"
-}
-
-# ============================
-#  ANONIMIZAR RUTAS DENTRO DEL CONTENIDO
+#  ANONIMIZAR RUTAS (solo directorios)
 # ============================
 
 function Anonymize-PathInText {
     param(
-        [string]$path,
-        $config,
-        $DynamicMap
+        [string]$path
     )
 
     $parts = $path -split "[/\\]"
@@ -192,33 +181,7 @@ function Anonymize-PathInText {
         if ($d -ne "") { $anonDirs += "anon" }
     }
 
-    # Detectar discos sensibles en cualquier contexto
-    $diskPattern = "^(?<name>.+)\.(?<ext>vhdx|iso|tib|tibx|vhd|vmdk)$"
-
-    # Caso 1: disco + .log
-    if ($file -match "^(?<name>.+)\.(?<ext>vhdx|iso|tib|tibx|vhd|vmdk)\.log$") {
-
-        $diskName = $matches["name"] + "." + $matches["ext"]
-        $anonDisk = Get-AnonymizedDiskName -originalName $diskName -config $config -DynamicMap $DynamicMap
-        $file = "$anonDisk.log"
-    }
-    # Caso 2: disco suelto
-    elseif ($file -match $diskPattern) {
-
-        $diskName = $matches["name"] + "." + $matches["ext"]
-        $file = Get-AnonymizedDiskName -originalName $diskName -config $config -DynamicMap $DynamicMap
-    }
-    else {
-        # Fichero normal → anon_fileX.ext
-        $ext = ""
-        if ($file -match "\.(?<ext>[A-Za-z0-9]+)$") {
-            $ext = "." + $matches["ext"]
-        }
-
-        $id  = Get-DynamicId -category "file" -value $file -config $config -DynamicMap $DynamicMap
-        $file = "anon_file${id}$ext"
-    }
-
+    # NO anonimizar el fichero aquí
     $sep = "\"
     if ($path.Contains("/")) { $sep = "/" }
 
@@ -226,73 +189,8 @@ function Anonymize-PathInText {
 }
 
 # ============================
-#  ANONIMIZAR NOMBRE DE FICHEROS .LOG FÍSICOS
-# ============================
-
-function Get-AnonymizedLogFileName {
-    param(
-        [string]$filePath,
-        $config,
-        $DynamicMap
-    )
-
-    $name = [System.IO.Path]::GetFileName($filePath)
-
-    # Detectar logs sensibles
-    if ($name -match "^(?<name>.+)\.(?<ext>vhdx|iso|tib|tibx|vhd|vmdk)\.log$") {
-
-        $diskName = $matches["name"] + "." + $matches["ext"]
-        $anonDisk = Get-AnonymizedDiskName -originalName $diskName -config $config -DynamicMap $DynamicMap
-
-        return "$anonDisk.log"
-    }
-
-    return $name
-}
-
-# ============================
 #  APLICAR REGLAS DE CONTENIDO
 # ============================
-
-function Apply-FixedReplacements {
-    param($text, $config)
-
-    foreach ($category in $config.fixed_replacements.PSObject.Properties.Name) {
-        foreach ($rule in $config.fixed_replacements.$category) {
-            if ($rule.enabled) {
-                $text = $text -replace [regex]::Escape($rule.match), $rule.replace
-            }
-        }
-    }
-    return $text
-}
-
-function Apply-FixedRegex {
-    param($text, $config)
-
-    foreach ($category in $config.regex_rules_fixed.PSObject.Properties.Name) {
-        foreach ($rule in $config.regex_rules_fixed.$category) {
-            if ($rule.enabled) {
-                $text = $text -replace $rule.pattern, $rule.replace
-            }
-        }
-    }
-    return $text
-}
-
-function Apply-DynamicReplacements {
-    param($text, $config, $DynamicMap)
-
-    foreach ($category in $config.dynamic_replacements.PSObject.Properties.Name) {
-        foreach ($rule in $config.dynamic_replacements.$category) {
-            if ($rule.enabled) {
-                $id = Get-DynamicId -category $category -value $rule.match -config $config -DynamicMap $DynamicMap
-                $text = $text -replace [regex]::Escape($rule.match), $id
-            }
-        }
-    }
-    return $text
-}
 
 function Apply-DynamicRegex {
     param($text, $config, $DynamicMap)
@@ -302,18 +200,35 @@ function Apply-DynamicRegex {
 
             if (-not $rule.enabled) { continue }
 
+            # --- RUTAS ---
             if ($category -eq "file_path") {
                 $text = [regex]::Replace($text, $rule.pattern, {
                     param($m)
-                    Anonymize-PathInText -path $m.Value -config $config -DynamicMap $DynamicMap
+                    Anonymize-PathInText -path $m.Value
                 })
                 continue
             }
 
-            $text = [regex]::Replace($text, $rule.pattern, {
-                param($m)
-                Get-DynamicId -category $category -value $m.Value -config $config -DynamicMap $DynamicMap
-            })
+            # --- FICHEROS (suelto o en ruta) ---
+            if ($category -eq "file_name") {
+                $text = [regex]::Replace($text, $rule.pattern, {
+                    param($m)
+
+                    $file = $m.Value
+
+                    # Extraer extensión
+                    $ext = ""
+                    if ($file -match "\.(?<ext>[A-Za-z0-9]+)$") {
+                        $ext = "." + $matches["ext"]
+                    }
+
+                    # Obtener ID único para este fichero
+                    $id = Get-DynamicId -category "file" -value $file -config $config -DynamicMap $DynamicMap
+
+                    return "anon_file${id}$ext"
+                })
+                continue
+            }
         }
     }
     return $text
@@ -322,11 +237,7 @@ function Apply-DynamicRegex {
 function Anonymize-Text {
     param($text, $config, $DynamicMap)
 
-    $text = Apply-FixedReplacements -text $text -config $config
-    $text = Apply-FixedRegex -text $text -config $config
-    $text = Apply-DynamicReplacements -text $text -config $config -DynamicMap $DynamicMap
     $text = Apply-DynamicRegex -text $text -config $config -DynamicMap $DynamicMap
-
     return $text
 }
 
@@ -343,9 +254,18 @@ function Anonymize-File {
     $outFolder = Join-Path (Split-Path $filePath) "anonymized"
     if (-not (Test-Path $outFolder)) { New-Item -ItemType Directory -Path $outFolder | Out-Null }
 
-    $anonName = Get-AnonymizedLogFileName -filePath $filePath -config $config -DynamicMap $DynamicMap
-    $outFile  = Join-Path $outFolder $anonName
+    # Anonimizar nombre del fichero físico
+    $name = [System.IO.Path]::GetFileName($filePath)
 
+    $ext = ""
+    if ($name -match "\.(?<ext>[A-Za-z0-9]+)$") {
+        $ext = "." + $matches["ext"]
+    }
+
+    $id = Get-DynamicId -category "file" -value $name -config $config -DynamicMap $DynamicMap
+    $anonName = "anon_file${id}$ext"
+
+    $outFile  = Join-Path $outFolder $anonName
     Set-Content -Path $outFile -Value $anon
 }
 
@@ -373,6 +293,7 @@ elseif (Test-Path $Path -PathType Leaf) {
 else {
     Write-Host "ERROR: La ruta no existe: $Path"
 }
+
 ```
 
 ## copia-segura_v4.1.ps1
