@@ -49,21 +49,12 @@
     },
 
     "regex_rules_fixed": {
-        "dni": [
-            { "pattern": "\\b\\d{8}[A-Z]\\b", "replace": "DNI-XXXX", "enabled": true, "priority": 1 }
-        ],
-        "ip": [
-            { "pattern": "\\b[0-9]{1,3}(?:\\.[0-9]{1,3}){3}\\b", "replace": "IP-REDACTED", "enabled": true, "priority": 1 }
-        ],
-        "sha256": [
-            { "pattern": "\\b[A-Fa-f0-9]{64}\\b", "replace": "CENSORED-HASH", "enabled": true, "priority": 1 }
-        ],
         "last_modified": [
             {
                 "pattern": "LAST MODIFIED:\\s*\\d{2}\\/\\d{2}\\/\\d{2}\\s+\\d{2}:\\d{2}:\\d{2}",
                 "replace": "LAST MODIFIED: CENSORED_DATE_TIME",
                 "enabled": true,
-                "priority": 1
+                "priority": 0
             }
         ]
     },
@@ -79,11 +70,10 @@
             { "pattern": "(?:[A-Za-z]:\\\\[^\\\\\\r\\n]+(?:\\\\[^\\\\\\r\\n]+)*)|(?:\\/[^\n\\/\\r]+(?:\\/[^\n\\/\\r]+)*)", "enabled": true, "priority": 1 }
         ],
         "file_name": [
-            { "pattern": "\\b([A-Za-z0-9._-]+\\.[A-Za-z0-9]+)\\b", "enabled": true, "priority": 1 }
+            { "pattern": "\\b([A-Za-z0-9._-]+\\.[A-Za-z0-9]+)\\b", "enabled": true, "priority": 10 }
         ]
     }
 }
-
 
 ```
 
