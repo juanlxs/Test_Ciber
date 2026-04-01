@@ -126,25 +126,59 @@ function Get-DynamicId {
 }
 
 # ============================
-#  ANONIMIZAR RUTAS
+#  ANONIMIZAR RUTAS (manteniendo unidad)
 # ============================
 
 function Anonymize-PathInText {
     param([string]$path)
 
+    if ([string]::IsNullOrWhiteSpace($path)) { return $path }
+
     $parts = $path -split "[/\\]"
     if ($parts.Count -eq 0) { return $path }
 
-    $dirs = $parts[0..($parts.Count - 2)]
-    $file = $parts[-1]
+    $drive = $null
+    $startIndex = 0
 
-    $anonDirs = @()
-    foreach ($d in $dirs) {
-        if ($d -ne "") { $anonDirs += "anon" }
+    # Caso Windows con unidad: C:, D:, etc.
+    if ($parts[0] -match '^[A-Za-z]:$') {
+        $drive = $parts[0]
+        $startIndex = 1
     }
 
-    $sep = $path.Contains("/") ? "/" : "\"
-    return ($anonDirs + $file) -join $sep
+    # Caso Unix: ruta empieza por /
+    if ($parts[0] -eq "" -and $path.StartsWith("/")) {
+        $startIndex = 1
+    }
+
+    if ($parts.Count - 1 -lt $startIndex) { return $path }
+
+    $dirs = @()
+    if ($parts.Count -gt 1) {
+        $dirs = $parts[$startIndex..($parts.Count - 2)]
+    }
+
+    $file = $parts[-1]
+
+    $anonParts = @()
+
+    if ($drive) {
+        $anonParts += $drive
+    }
+    elseif ($path.StartsWith("/")) {
+        $anonParts += ""
+    }
+
+    foreach ($d in $dirs) {
+        if ($d -ne "") { $anonParts += "anon" }
+    }
+
+    $sep = $path.Contains("/") -and -not $path.Contains("\") ? "/" : "\"
+    if ($anonParts.Count -eq 0) {
+        return $file
+    }
+
+    return ($anonParts + $file) -join $sep
 }
 
 # ============================
@@ -259,18 +293,19 @@ function Apply-DynamicRegex {
 
 # ============================
 #  DETECTAR DISCO ANONIMIZADO EN CONTENIDO
+#  (REUTILIZA el nombre ya anonimizadO, NO reasigna ID)
 # ============================
 
 function Get-AnonymizedDiskNameFromContent {
-    param($content, $config, $DynamicMap)
+    param($content, $config)
 
     foreach ($ext in $config.settings.sensitive_disk_extensions) {
         $regex = "\b([A-Za-z0-9._-]+)\.$ext\b"
         $match = [regex]::Match($content, $regex)
 
         if ($match.Success) {
-            $original = $match.Value
-            return Get-DynamicId -category "file" -value $original -config $config -DynamicMap $DynamicMap
+            # match.Groups[1] = nombre sin extensión (ej: anon_file8)
+            return "$($match.Groups[1].Value).$ext"
         }
     }
 
@@ -314,11 +349,11 @@ function Anonymize-File {
 
     if ($name -match "\.(vhdx|vhd|vmdk|iso|tib|tibx)\.log$") {
 
-        $diskAnon = Get-AnonymizedDiskNameFromContent -content $anon -config $config -DynamicMap $DynamicMap
+        $diskAnon = Get-AnonymizedDiskNameFromContent -content $anon -config $config
 
         if ($diskAnon) {
             $ext = $name -replace ".*\.(\w+)\.log$", '$1'
-            $outName = "$diskAnon.$ext.log"
+            $outName = "$diskAnon.log"
         }
         else {
             $outName = $name
@@ -360,6 +395,7 @@ elseif (Test-Path $Path -PathType Leaf) {
 else {
     Write-Host "ERROR: La ruta no existe: $Path"
 }
+
 ```
 
 ## copia-segura_v4.1.ps1
