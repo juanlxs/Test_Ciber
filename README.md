@@ -173,7 +173,12 @@ function Anonymize-PathInText {
         if ($d -ne "") { $anonParts += "anon" }
     }
 
-    $sep = $path.Contains("/") -and -not $path.Contains("\") ? "/" : "\"
+    # Determinar separador sin usar ?:
+    $sep = "\"
+    if ($path.Contains("/") -and -not $path.Contains("\")) {
+        $sep = "/"
+    }
+
     if ($anonParts.Count -eq 0) {
         return $file
     }
@@ -293,7 +298,6 @@ function Apply-DynamicRegex {
 
 # ============================
 #  DETECTAR DISCO ANONIMIZADO EN CONTENIDO
-#  (REUTILIZA el nombre ya anonimizadO, NO reasigna ID)
 # ============================
 
 function Get-AnonymizedDiskNameFromContent {
@@ -304,7 +308,6 @@ function Get-AnonymizedDiskNameFromContent {
         $match = [regex]::Match($content, $regex)
 
         if ($match.Success) {
-            # match.Groups[1] = nombre sin extensión (ej: anon_file8)
             return "$($match.Groups[1].Value).$ext"
         }
     }
@@ -352,7 +355,6 @@ function Anonymize-File {
         $diskAnon = Get-AnonymizedDiskNameFromContent -content $anon -config $config
 
         if ($diskAnon) {
-            $ext = $name -replace ".*\.(\w+)\.log$", '$1'
             $outName = "$diskAnon.log"
         }
         else {
@@ -395,6 +397,7 @@ elseif (Test-Path $Path -PathType Leaf) {
 else {
     Write-Host "ERROR: La ruta no existe: $Path"
 }
+
 
 ```
 
