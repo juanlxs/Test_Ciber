@@ -4,7 +4,22 @@
 ```md
 ^(?!.*\.domain\.my\.corp$)(?!^\d+(?:\.\d+)+$).+\.[A-Za-z]{2,10}$
 ```
+Aquí tienes un resumen formal, conciso y correcto del motivo por el cual no aparece el hash de la ISO, pero sí aparece el hash del ZIP en el portal de Broadcom/VMware:
 
+---
+
+Resumen formal
+
+En el portal de Broadcom, los archivos de ESXi se distribuyen mediante dos canales distintos: instaladores completos (ISO) y paquetes de actualización (ZIP).
+Los instaladores ISO solo están disponibles en la sección Product Downloads, cuyo acceso requiere una licencia válida asociada al producto. Cuando el usuario no dispone de dichos permisos, la ISO no se muestra y, en consecuencia, tampoco se publica su hash.
+
+Por el contrario, los archivos ZIP pertenecen al canal Patches & Updates, que es público y no requiere permisos de licencia para su visualización. Debido a que estos paquetes se utilizan en procesos de actualización automatizados, el portal publica sus checksums oficiales (SHA256/MD5) para garantizar la verificación de integridad.
+
+En síntesis, la ausencia del hash de la ISO se debe a restricciones de acceso, mientras que el hash del ZIP sí se muestra porque forma parte del canal público de parches, donde la verificación de integridad es obligatoria.
+
+---
+
+Si quieres, puedo convertir este resumen en un texto para un informe técnico, auditoría o documentación interna.
 ## ps1
 ```md
 param(
