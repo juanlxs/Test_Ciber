@@ -2,7 +2,20 @@
 
 ## json
 ```md
-^(?!.*\.domain\.my\.corp$)(?!^\d+(?:\.\d+)+$).+\.[A-Za-z]{2,10}$
+$regex = 'FSC_.*\.dmp'
+$carpeta = "C:\ruta\de\los\csv"
+
+Get-ChildItem -Path $carpeta -Filter *.csv |
+    Sort-Object LastWriteTime -Descending |
+    ForEach-Object {
+        $archivo = $_.FullName
+        Get-Content $archivo | ForEach-Object {
+            if ($_ -match $regex) {
+                Write-Output "$archivo : $_"
+            }
+        }
+    }
+
 ```
 Aquí tienes un resumen formal, conciso y correcto del motivo por el cual no aparece el hash de la ISO, pero sí aparece el hash del ZIP en el portal de Broadcom/VMware:
 
