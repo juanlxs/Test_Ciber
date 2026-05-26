@@ -2,19 +2,81 @@
 
 ## json
 ```md
-$regex = 'FSC_.*\.dmp'
-$carpeta = "C:\ruta\de\los\csv"
+# Rutas de los logs de entrada
+$log1 = "C:\ruta\log1.txt"
+$log2 = "C:\ruta\log2.txt"
 
-Get-ChildItem -Path $carpeta -Filter *.csv |
-    Sort-Object LastWriteTime -Descending |
-    ForEach-Object {
-        $archivo = $_.FullName
-        Get-Content $archivo | ForEach-Object {
-            if ($_ -match $regex) {
-                Write-Output "$archivo : $_"
+# Ruta del log de salida
+$outputLog = "C:\ruta\resultado_comparacion.log"
+
+function Parse-Log {
+    param($file)
+
+    $entries = @()
+    $currentPath = $null
+    $currentHash = $null
+
+    foreach ($line in Get-Content $file) {
+
+        # Detectar PATH
+        if ($line -match '^PATH:\s*(.+)$') {
+            $currentPath = $matches[1].Trim()
+            continue
+        }
+
+        # Detectar SOLO hashes SHA-256 (64 hex)
+        if ($line -match '^Hash:\s*([A-Fa-f0-9]{64})$') {
+            $currentHash = $matches[1].Trim()
+            continue
+        }
+
+        # Separador de ítems (3 o más guiones)
+        if ($line -match '[-]{3,}') {
+            if ($currentPath) {
+                $entries += [PSCustomObject]@{
+                    Path = $currentPath
+                    Hash = $currentHash
+                }
             }
+            $currentPath = $null
+            $currentHash = $null
         }
     }
+
+    return $entries
+}
+
+# Cargar logs
+$data1 = Parse-Log $log1
+$data2 = Parse-Log $log2
+
+# Comparación
+$comparacion = Compare-Object -ReferenceObject $data1 -DifferenceObject $data2 -Property Path, Hash -IncludeEqual
+
+# Crear log de salida
+"=== RESULTADO DE COMPARACIÓN ===" | Out-File $outputLog
+"Fecha: $(Get-Date)" | Out-File $outputLog -Append
+"" | Out-File $outputLog -Append
+
+"=== COINCIDEN ===" | Out-File $outputLog -Append
+$comparacion |
+    Where-Object { $_.SideIndicator -eq '==' } |
+    ForEach-Object {
+        "Path: $($_.Path)" | Out-File $outputLog -Append
+        "Hash: $($_.Hash)" | Out-File $outputLog -Append
+        "" | Out-File $outputLog -Append
+    }
+
+"=== DIFERENCIAS ===" | Out-File $outputLog -Append
+$comparacion |
+    Where-Object { $_.SideIndicator -ne '==' } |
+    ForEach-Object {
+        "Path: $($_.Path)" | Out-File $outputLog -Append
+        "Hash: $($_.Hash)" | Out-File $outputLog -Append
+        "Origen: $($_.SideIndicator)" | Out-File $outputLog -Append
+        "" | Out-File $outputLog -Append
+    }
+
 
 ```
 Aquí tienes un resumen formal, conciso y correcto del motivo por el cual no aparece el hash de la ISO, pero sí aparece el hash del ZIP en el portal de Broadcom/VMware:
