@@ -2,29 +2,15 @@
 
 ## json
 ```md
-param(
-    [string]$InputFile,
-    [string]$OutputFile
-)
-
-# Leer todas las líneas
-$lines = Get-Content $InputFile
-
-# Lista para el resultado
-$result = @()
-
-for ($i = 0; $i -lt $lines.Count; $i += 2) {
-    if ($i + 1 -lt $lines.Count) {
-        # Une línea impar + línea par
-        $result += "$($lines[$i]) $($lines[$i+1])"
-    } else {
-        # Si hay una línea suelta al final, se deja igual
-        $result += $lines[$i]
-    }
-}
-
-# Guardar resultado
-$result | Set-Content $OutputFile
+$n = 0
+Get-Content archivo.txt |
+  % {
+      if($n -eq 0){ $p = $_ }
+      elseif($n -eq 1){ $p += " $_" }
+      elseif($n -eq 2){ $p += " $_"; $p; $n = -1 }
+      $n++
+    } |
+  Set-Content salida.txt
 
 
 ```
