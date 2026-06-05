@@ -2,16 +2,31 @@
 
 ## json
 ```md
-$n = 0
-Get-Content archivo.txt |
-  % {
-      if($n -eq 0){ $p = $_ }
-      elseif($n -eq 1){ $p += " $_" }
-      elseif($n -eq 2){ $p += " $_"; $p; $n = -1 }
-      $n++
-    } |
-  Set-Content salida.txt
+$source = "C:\ruta\disco.vhdx"
+$dest = "C:\ruta\trozo.bin"
 
+$startOffset = 1234567890      # inicio en bytes
+$endOffset   = 2234567890      # fin en bytes
+
+$length = $endOffset - $startOffset
+
+$in  = [System.IO.File]::OpenRead($source)
+$out = [System.IO.File]::Create($dest)
+
+$in.Seek($startOffset, 'Begin') | Out-Null
+
+$buffer = New-Object byte[] 1048576  # 1 MB
+$remaining = $length
+
+while ($remaining -gt 0) {
+    $read = $in.Read($buffer, 0, [Math]::Min($buffer.Length, $remaining))
+    if ($read -le 0) { break }
+    $out.Write($buffer, 0, $read)
+    $remaining -= $read
+}
+
+$in.Close()
+$out.Close()
 
 ```
 Aquí tienes un resumen formal, conciso y correcto del motivo por el cual no aparece el hash de la ISO, pero sí aparece el hash del ZIP en el portal de Broadcom/VMware:
