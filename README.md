@@ -5,17 +5,24 @@
 $source = "C:\ruta\disco.vhdx"
 $dest = "C:\ruta\trozo.bin"
 
-$startOffset = 1234567890      # inicio en bytes
-$endOffset   = 2234567890      # fin en bytes
+$startOffset = 1234567890
+$endOffset   = 2234567890
 
 $length = $endOffset - $startOffset
+Write-Host "Longitud a copiar: $length bytes"
+
+if ($length -le 0) {
+    Write-Host "ERROR: longitud inválida"
+    exit
+}
 
 $in  = [System.IO.File]::OpenRead($source)
 $out = [System.IO.File]::Create($dest)
 
-$in.Seek($startOffset, 'Begin') | Out-Null
+$seek = $in.Seek($startOffset, 'Begin')
+Write-Host "Seek real: $seek"
 
-$buffer = New-Object byte[] 1048576  # 1 MB
+$buffer = New-Object byte[] 1048576
 $remaining = $length
 
 while ($remaining -gt 0) {
@@ -27,6 +34,8 @@ while ($remaining -gt 0) {
 
 $in.Close()
 $out.Close()
+
+Write-Host "Archivo final: $(Get-Item $dest).Length bytes"
 
 ```
 Aquí tienes un resumen formal, conciso y correcto del motivo por el cual no aparece el hash de la ISO, pero sí aparece el hash del ZIP en el portal de Broadcom/VMware:
