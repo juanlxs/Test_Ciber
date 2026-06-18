@@ -2,19 +2,63 @@
 
 ## json
 ```md
-$path = "C:\ruta\disco.vhdx"
-$offset = 1234567890
-$size = 4096
+$entrada = "C:\ruta\particion.img"
+$salida = "C:\ruta\Fragmentos"
+$blockSize = 512
 
-$fs = [System.IO.File]::OpenRead($path)
-$fs.Seek($offset, 'Begin') | Out-Null
+New-Item -ItemType Directory -Force -Path $salida | Out-Null
 
-$buffer = New-Object byte[] $size
-$read = $fs.Read($buffer, 0, $size)
+$fs = [System.IO.File]::OpenRead($entrada)
+$buffer = New-Object byte[] $blockSize
+
+$offset = 0
+$fragmento = 0
+$escribiendo = $false
+$out = $null
+
+while (($bytesRead = $fs.Read($buffer, 0, $blockSize)) -gt 0) {
+
+    $tieneDatos = $false
+    for ($i = 0; $i -lt $bytesRead; $i++) {
+        if ($buffer[$i] -ne 0) {
+            $tieneDatos = $true
+            break
+        }
+    }
+
+    if ($tieneDatos) {
+
+        if (-not $escribiendo) {
+            $fragmento++
+            $nombre = Join-Path $salida ("fragmento_{0:D3}_0x{1:X}.bin" -f $fragmento, $offset)
+            $out = [System.IO.File]::Create($nombre)
+            $escribiendo = $true
+
+            Write-Host "Inicio fragmento $fragmento en offset 0x$('{0:X}' -f $offset)"
+        }
+
+        $out.Write($buffer, 0, $bytesRead)
+
+    }
+    else {
+
+        if ($escribiendo) {
+            $out.Close()
+            $escribiendo = $false
+
+            Write-Host "Fin fragmento $fragmento"
+        }
+
+    }
+
+    $offset += $bytesRead
+}
+
+if ($escribiendo) {
+    $out.Close()
+}
+
 $fs.Close()
-
-$buffer | Format-Hex
-
 ```
 Aquí tienes un resumen formal, conciso y correcto del motivo por el cual no aparece el hash de la ISO, pero sí aparece el hash del ZIP en el portal de Broadcom/VMware:
 
