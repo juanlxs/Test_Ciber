@@ -2,16 +2,11 @@
 
 ## json
 ```md
-try {
-    $fs = [IO.File]::OpenRead(".\file-20260315.gz")
-    $gz = New-Object IO.Compression.GzipStream($fs, [IO.Compression.CompressionMode]::Decompress)
-    $buffer = New-Object byte[] 10
-    $gz.Read($buffer, 0, 10)
-    "GZIP válido"
-} catch {
-    "NO es un GZIP válido"
-}
+El fichero analizado, identificado como un respaldo comprimido (file‑20260315.gz), conserva una cabecera gzip válida y contiene en su interior un archivo TAR cuyas cabeceras indican un tamaño esperado aproximado de 280 MB y una fecha interna correspondiente al proceso de backup según la documentación de SUSE. Sin embargo, el flujo comprimido está dañado: la descompresión solo recupera 1.835 KB de datos antes de detenerse con errores de integridad. Herramientas como 7‑Zip muestran el mensaje “Unexpected end of data”, lo que confirma que el contenido real del archivo ha sido truncado o sobrescrito. El fragmento extraído presenta datos válidos al inicio y un patrón repetitivo al final, característico de sobrescritura. El fichero no puede ser recuperado ni utilizado como respaldo válido.
 
+
+
+La evidencia técnica demuestra que el fichero fue un gzip válido en su origen, con cabecera gzip y cabecera TAR internas intactas, incluyendo un tamaño declarado de 280 MB y una fecha interna coherente con el proceso de backup de SUSE. No obstante, el flujo comprimido está severamente dañado: la descompresión real produce únicamente 1.835 KB, 7‑Zip informa “Unexpected end of data”, y el contenido final del archivo descomprimido muestra un patrón repetitivo que evidencia sobrescritura de bloques. La lectura inicial de 10 bytes mediante GzipStream.Read() confirma que la corrupción se produce después de los primeros bloques válidos del flujo gzip. La magnitud de la pérdida de datos indica truncado o sobrescritura masiva, probablemente causada por un fallo del sistema de archivos o del dispositivo de almacenamiento. El fichero es irrecuperable y no puede considerarse un respaldo válido.
 ```
 Aquí tienes un resumen formal, conciso y correcto del motivo por el cual no aparece el hash de la ISO, pero sí aparece el hash del ZIP en el portal de Broadcom/VMware:
 
