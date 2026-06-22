@@ -2,63 +2,16 @@
 
 ## json
 ```md
-$entrada = "C:\ruta\particion.img"
-$salida = "C:\ruta\Fragmentos"
-$blockSize = 512
-
-New-Item -ItemType Directory -Force -Path $salida | Out-Null
-
-$fs = [System.IO.File]::OpenRead($entrada)
-$buffer = New-Object byte[] $blockSize
-
-$offset = 0
-$fragmento = 0
-$escribiendo = $false
-$out = $null
-
-while (($bytesRead = $fs.Read($buffer, 0, $blockSize)) -gt 0) {
-
-    $tieneDatos = $false
-    for ($i = 0; $i -lt $bytesRead; $i++) {
-        if ($buffer[$i] -ne 0) {
-            $tieneDatos = $true
-            break
-        }
-    }
-
-    if ($tieneDatos) {
-
-        if (-not $escribiendo) {
-            $fragmento++
-            $nombre = Join-Path $salida ("fragmento_{0:D3}_0x{1:X}.bin" -f $fragmento, $offset)
-            $out = [System.IO.File]::Create($nombre)
-            $escribiendo = $true
-
-            Write-Host "Inicio fragmento $fragmento en offset 0x$('{0:X}' -f $offset)"
-        }
-
-        $out.Write($buffer, 0, $bytesRead)
-
-    }
-    else {
-
-        if ($escribiendo) {
-            $out.Close()
-            $escribiendo = $false
-
-            Write-Host "Fin fragmento $fragmento"
-        }
-
-    }
-
-    $offset += $bytesRead
+try {
+    $fs = [IO.File]::OpenRead(".\file-20260315.gz")
+    $gz = New-Object IO.Compression.GzipStream($fs, [IO.Compression.CompressionMode]::Decompress)
+    $buffer = New-Object byte[] 10
+    $gz.Read($buffer, 0, 10)
+    "GZIP válido"
+} catch {
+    "NO es un GZIP válido"
 }
 
-if ($escribiendo) {
-    $out.Close()
-}
-
-$fs.Close()
 ```
 Aquí tienes un resumen formal, conciso y correcto del motivo por el cual no aparece el hash de la ISO, pero sí aparece el hash del ZIP en el portal de Broadcom/VMware:
 
