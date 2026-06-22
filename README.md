@@ -2,11 +2,39 @@
 
 ## json
 ```md
-El fichero analizado, identificado como un respaldo comprimido (file‑20260315.gz), conserva una cabecera gzip válida y contiene en su interior un archivo TAR cuyas cabeceras indican un tamaño esperado aproximado de 280 MB y una fecha interna correspondiente al proceso de backup según la documentación de SUSE. Sin embargo, el flujo comprimido está dañado: la descompresión solo recupera 1.835 KB de datos antes de detenerse con errores de integridad. Herramientas como 7‑Zip muestran el mensaje “Unexpected end of data”, lo que confirma que el contenido real del archivo ha sido truncado o sobrescrito. El fragmento extraído presenta datos válidos al inicio y un patrón repetitivo al final, característico de sobrescritura. El fichero no puede ser recuperado ni utilizado como respaldo válido.
+7. Análisis con herramienta multiantivirus (resumido)
+
+La herramienta multiantivirus no ha podido escanear completamente el fichero Packages‑20260511.gz porque su estructura interna es inválida y no es posible extraer el contenido completo. Solo se ha podido analizar:
+
+• la envoltura gzip (escaneo binario del .gz), y
+• el fragmento parcial (≈1.835 KB) que sí pudo descomprimirse.
 
 
+El resto del contenido —aproximadamente 279 MB— no ha podido ser analizado porque la herramienta no ha sido capaz de extraerlo.
 
-La evidencia técnica demuestra que el fichero fue un gzip válido en su origen, con cabecera gzip y cabecera TAR internas intactas, incluyendo un tamaño declarado de 280 MB y una fecha interna coherente con el proceso de backup de SUSE. No obstante, el flujo comprimido está severamente dañado: la descompresión real produce únicamente 1.835 KB, 7‑Zip informa “Unexpected end of data”, y el contenido final del archivo descomprimido muestra un patrón repetitivo que evidencia sobrescritura de bloques. La lectura inicial de 10 bytes mediante GzipStream.Read() confirma que la corrupción se produce después de los primeros bloques válidos del flujo gzip. La magnitud de la pérdida de datos indica truncado o sobrescritura masiva, probablemente causada por un fallo del sistema de archivos o del dispositivo de almacenamiento. El fichero es irrecuperable y no puede considerarse un respaldo válido.
+---
+
+Riesgos de seguridad
+
+Riesgos que SÍ existen
+
+• No se puede garantizar que la parte no extraída esté libre de malware.
+• Existe riesgo residual, ya que el análisis no cubre el 100 % del archivo.
+• No se puede descartar manipulación maliciosa previa a la corrupción.
+
+
+Riesgos que NO aplican
+
+• El archivo no puede ejecutarse ni causar infección en su estado actual.
+• La parte analizada (envoltura + fragmento) no contiene amenazas detectadas.
+• No hay riesgo directo para el sistema que realiza el análisis, ya que la corrupción impide cualquier ejecución.
+
+
+---
+
+Conclusión
+
+El análisis antivirus es incompleto debido a la corrupción del fichero. Aunque la parte accesible no muestra indicios de malware, no es posible asegurar la integridad ni la seguridad del contenido original, ya que una porción significativa del archivo no ha podido ser escaneada.
 ```
 Aquí tienes un resumen formal, conciso y correcto del motivo por el cual no aparece el hash de la ISO, pero sí aparece el hash del ZIP en el portal de Broadcom/VMware:
 
